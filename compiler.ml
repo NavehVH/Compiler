@@ -1724,10 +1724,24 @@ module Code_Generation (* : CODE_GENERATION *) = struct
       Printf.sprintf "%s:\n%s"
         label_start_of_constants_table (run table);;
 
-  (*FINAL PROJECT NEED TO BUILD: collect_free_vars *)
+  (*FINAL PROJECT NEED TO BUILD: collect_free_vars *) (* I think done *)
   let collect_free_vars =
     let rec run = function
-      | _ -> raise (X_not_yet_implemented "final project")
+      | ScmConst' _ -> []
+      | ScmVarGet' (Var' (_, Free)) -> [] 
+      | ScmVarGet' (Var' (v, _)) -> [v] 
+      | ScmIf' (test, dit, dif) ->
+        (run test) @ (run dit) @ (run dif)
+      | ScmSeq' exprs' | ScmOr' exprs' -> runs exprs'
+      | ScmVarDef' (Var' (v, Free), expr') 
+      | ScmVarSet' (Var' (v, Free), expr') ->
+       v :: (run expr')
+      | ScmBox' _ -> [] 
+      | ScmBoxGet' _ -> [] 
+      | ScmBoxSet' (_, expr') -> run expr'
+      | ScmLambda' (_, params, body) -> run body (* not sure *)
+      | ScmApplic' (proc, args, _) ->
+        (run proc) @ (runs args)
     and runs exprs' =
       List.fold_left
         (fun vars expr' -> vars @ (run expr'))
