@@ -1551,10 +1551,30 @@ module Code_Generation (* : CODE_GENERATION *) = struct
     ];;  
 
 
-  (*FINAL PROJECT NEED TO BUILD: collect_constants *)
+  (*FINAL PROJECT NEED TO BUILD: collect_constants *) (* DONE (I think) *)
   let collect_constants =
     let rec run = function
-      | _ -> raise (X_not_yet_implemented "final project")
+      | ScmConst' sexpr -> [sexpr]
+      | ScmVarGet' (Var' (v, Free)) -> [ScmString v]
+      | ScmVarGet' _ -> []
+      | ScmIf' (test, dit, dif) ->
+        run test @ run dit @ run dif
+      | ScmSeq' exprs' | ScmOr' exprs' ->
+        runs exprs'
+      | ScmVarDef' (Var' (v, Free), expr') 
+      | ScmVarSet' (Var' (v, Free), expr') ->
+        (ScmString v) :: (run expr')
+      | ScmVarSet' (_, expr') | ScmVarDef' (_, expr') ->
+        run expr'
+      | ScmBox' _ -> []
+      | ScmBoxGet' _ -> []
+      | ScmBoxSet' (_, expr') ->
+        run expr'
+      | ScmLambda' (_, _, body) ->
+        run body
+      | ScmApplic' (proc, args, _) ->
+        run proc @ runs args 
+
     and runs exprs' =
       List.fold_left (fun consts expr' -> consts @ (run expr')) [] exprs'
     in
@@ -1592,7 +1612,7 @@ module Code_Generation (* : CODE_GENERATION *) = struct
       | _ :: sexprs -> run sexpr sexprs
     in run;;
 
-  (*FINAL PROJECT NEED TO BUILD: const_repr *)
+  (*FINAL PROJECT NEED TO BUILD: const_repr *) (* DONE (I think) *)
   let const_repr sexpr loc table = match sexpr with
     | ScmVoid -> ([RTTI "T_void"], 1)
     | ScmNil -> ([RTTI "T_nil"], 1)
@@ -1603,20 +1623,25 @@ module Code_Generation (* : CODE_GENERATION *) = struct
     | ScmChar ch ->
       ([RTTI "T_char"; Byte (int_of_char ch)], 2)
     | ScmString str ->
-      raise (X_not_yet_implemented "final project")
+      let length = String.length str in
+      ([RTTI "T_string"; Quad length; ASCII str], 1 + length + word_size)
     | ScmSymbol sym ->
       let addr = search_constant_address (ScmString sym) table in
       ([RTTI "T_interned_symbol"; ConstPtr addr], 1 + word_size)
     | ScmNumber (ScmInteger n) ->
       ([RTTI "T_integer"; Quad n], 1 + word_size)
     | ScmNumber (ScmFraction (numerator, denominator)) ->
-      raise (X_not_yet_implemented "final project")
+      ([RTTI "T_fraction"; Quad numerator; Quad denominator], 1 + 2 * word_size)
     | ScmNumber (ScmReal x) ->
       ([RTTI "T_real"; QuadFloat x], 1 + word_size)
     | ScmVector s ->
-      raise (X_not_yet_implemented "final project")
+      let len = List.length s in
+      let element_addresses = List.map (fun e -> ConstPtr (search_constant_address e table)) s in
+      ([RTTI "T_vector"; Quad len] @ element_addresses, 1 + word_size + len * word_size)
     | ScmPair (car, cdr) ->
-      raise (X_not_yet_implemented "final project");;
+      let car_addr = ConstPtr (search_constant_address car table) in
+      let cdr_addr = ConstPtr (search_constant_address cdr table) in
+      ([RTTI "T_pair"; car_addr; cdr_addr], 1 + 2 * word_size)
 
   let make_constants_table =
     let rec run table loc = function
