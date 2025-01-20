@@ -1735,7 +1735,7 @@ module Code_Generation (* : CODE_GENERATION *) = struct
       | ScmSeq' exprs' | ScmOr' exprs' -> runs exprs'
       | ScmVarDef' (Var' (v, Free), expr') 
       | ScmVarSet' (Var' (v, Free), expr') ->
-       v :: (run expr')
+        v :: (run expr')
       | ScmBox' _ -> [] 
       | ScmBoxGet' _ -> [] 
       | ScmBoxSet' (_, expr') -> run expr'
@@ -1885,16 +1885,50 @@ module Code_Generation (* : CODE_GENERATION *) = struct
       | ScmSeq' exprs' ->
         String.concat "\n"
           (List.map (run params env) exprs')
-      | ScmOr' exprs' ->
-        raise (X_not_yet_implemented "final project")
-      | ScmVarSet' (Var' (v, Free), expr') ->
-        raise (X_not_yet_implemented "final project")
-      | ScmVarSet' (Var' (v, Param minor), ScmBox' _) ->
-        raise (X_not_yet_implemented "final project")
-      | ScmVarSet' (Var' (v, Param minor), expr') ->
-        raise (X_not_yet_implemented "final project")
-      | ScmVarSet' (Var' (v, Bound (major, minor)), expr') ->
-        raise (X_not_yet_implemented "final project")
+      | ScmOr' exprs' -> (* added? *)
+        let label_exit = make_or_end () in
+        let exprs_code =
+          String.concat "\n"
+            (List.mapi
+               (fun i expr' ->
+                  let expr_code = run params env expr' in
+                  if i < List.length exprs' - 1 then
+                    expr_code ^
+                    "\tcmp rax, sob_false\n" ^
+                    Printf.sprintf "\tjne %s\n" label_exit
+                  else
+                    expr_code)
+               exprs')
+        in
+        exprs_code ^
+        Printf.sprintf "%s:\n" label_exit
+      | ScmVarSet' (Var' (v, Free), expr') -> (* added? *)
+        let expr_code = run params env expr' in
+        let label = search_free_var_table v free_vars in
+        expr_code ^
+        Printf.sprintf "\tmov qword [%s], rax\n" label ^
+        "\tmov rax, sob_void\n"
+      | ScmVarSet' (Var' (v, Param minor), ScmBox' _) -> (* added? *)
+        "\tmov rdi, 8 * 1\n" ^
+        "\tcall malloc\n" ^
+        Printf.sprintf "\tmov rbx, PARAM(%d)\n" minor ^
+        "\tmov qword [rax], rbx\n" ^
+        Printf.sprintf "\tmov PARAM(%d), rax\n" minor ^
+        "\tmov rax, sob_void\n"
+
+      | ScmVarSet' (Var' (v, Param minor), expr') -> (* added? *)
+        let expr_code = run params env expr' in
+        expr_code ^
+        Printf.sprintf "\tmov PARAM(%d), rax\n" minor ^
+        "\tmov rax, sob_void\n"
+      | ScmVarSet' (Var' (v, Bound (major, minor)), expr') -> (* added? *)
+        let expr_code = run params env expr' in
+        expr_code ^
+        "\tmov rbx, ENV\n" ^
+        Printf.sprintf "\tmov rbx, qword [rbx + 8 * %d]\n" major ^
+        Printf.sprintf "\tmov qword [rbx + 8 * %d], rax\n" minor ^
+        "\tmov rax, sob_void\n"
+
       | ScmVarDef' (Var' (v, Free), expr') ->
         let label = search_free_var_table v free_vars in
         (run params env expr')
@@ -1909,7 +1943,13 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         (run params env (ScmVarGet' var'))
         ^ "\tmov rax, qword [rax]\n"
       | ScmBoxSet' (var', expr') ->
-        raise (X_not_yet_implemented "final project")
+        let expr_code = run params env expr' in
+        let var_code = run params env (ScmVarGet' var') in
+        expr_code ^
+        "\tpush rax\n" ^
+        var_code ^
+        "\tpop qword [rax]\n" ^
+        "\tmov rax, sob_void\n"
       | ScmLambda' (params', Simple, body) ->
         let label_loop_env = make_lambda_simple_loop_env ()
         and label_loop_env_end = make_lambda_simple_loop_env_end ()
