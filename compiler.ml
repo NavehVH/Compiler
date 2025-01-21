@@ -761,13 +761,20 @@ module Tag_Parser : TAG_PARSER = struct
       raise (X_syntax "Malformed set!-expression!")
     (* add support for define (ADDED) *)
     | ScmPair (ScmSymbol "define",
+               ScmPair (ScmPair (var, params),
+                        exprs)) ->
+      tag_parse
+        (ScmPair (ScmSymbol "define",
+                  ScmPair (var,
+                           ScmPair (ScmPair (ScmSymbol "lambda",
+                                             ScmPair (params, exprs)),
+                                    ScmNil))))
+    | ScmPair (ScmSymbol "define",
                ScmPair (ScmSymbol var,
                         ScmPair (expr, ScmNil))) ->
       if (is_reserved_word var)
-      then raise (X_syntax "cannot assign a reserved word")
+      then raise (X_syntax "cannot define a reserved word")
       else ScmVarDef(Var var, tag_parse expr)
-    | ScmPair (ScmSymbol "define", _) ->
-      raise (X_syntax "Malformed set!-expression!")
     | ScmPair (ScmSymbol "lambda", rest)
       when scm_improper_list rest ->
       raise (X_syntax "Malformed lambda-expression!")
@@ -1081,6 +1088,13 @@ module Semantic_Analysis : SEMANTIC_ANALYSIS = struct
          | expr :: rest -> 
            ScmSeq' (run false expr :: List.map (run false) rest))
       (* add support for or (ADDED)*)
+      | ScmOr' (exprs') ->
+        (match (list_and_last exprs') with
+         | None -> raise (X_this_should_not_happen "should not be empty!")
+         | Some (list, last) ->
+           let list = List.map (fun e' -> run false e') list in
+           let last = run in_tail last in
+           ScmOr' (list @ [last]))
       | ScmVarSet' (var', expr') -> ScmVarSet' (var', run false expr')
       | ScmVarDef' (var', expr') -> ScmVarDef' (var', run false expr')
       | (ScmBox' _) as expr' -> expr'
@@ -1727,28 +1741,20 @@ module Code_Generation (* : CODE_GENERATION *) = struct
   (*FINAL PROJECT NEED TO BUILD: collect_free_vars *) (* I think done *)
   let collect_free_vars =
     let rec run = function
-      | ScmConst' _ -> []
-      | ScmVarGet' (Var' (_, Free)) -> [] 
-      | ScmVarGet' (Var' (v, _)) -> [v] 
-      | ScmIf' (test, dit, dif) ->
-        (run test) @ (run dit) @ (run dif)
+      | ScmVarGet' (Var' (v, Free)) -> [v]
+      | ScmConst' _ | ScmBox' _ | ScmBoxGet' _ -> []
+      | ScmIf' (test, dit, dif) -> (run test) @ (run dit) @ (run dif)
       | ScmSeq' exprs' | ScmOr' exprs' -> runs exprs'
       | ScmVarDef' (Var' (v, Free), expr') 
-      | ScmVarSet' (Var' (v, Free), expr') ->
-        v :: (run expr')
-      | ScmBox' _ -> [] 
-      | ScmBoxGet' _ -> [] 
-      | ScmBoxSet' (_, expr') -> run expr'
-      | ScmLambda' (_, params, body) -> run body (* not sure *)
-      | ScmApplic' (proc, args, _) ->
-        (run proc) @ (runs args)
+      | ScmVarSet' (Var' (v, Free), expr') -> v :: (run expr')
+      | ScmVarSet' (_, expr') | ScmVarDef' (_, expr') 
+      | ScmBoxSet' (_, expr') | ScmLambda' (_, _, expr') -> run expr'
+      | ScmApplic' (proc, args, _) -> (run proc) @ (runs args)
+      | _ -> []
     and runs exprs' =
-      List.fold_left
-        (fun vars expr' -> vars @ (run expr'))
-        []
-        exprs'
-    in fun exprs' -> remove_duplicates (runs exprs');;
-
+      List.fold_left (fun vars expr' -> vars @ (run expr')) [] exprs'
+    in fun exprs' -> remove_duplicates (runs exprs')
+  
   let make_free_vars_table =
     let rec run index = function
       | [] -> []
