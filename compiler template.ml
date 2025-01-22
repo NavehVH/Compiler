@@ -1059,7 +1059,8 @@ module Semantic_Analysis : SEMANTIC_ANALYSIS = struct
       | ScmLambda (params', Simple, expr) ->
         ScmLambda' (params', Simple, run expr params' (params :: env))
       (* add support for lambda-opt (ADDED)*)
-      | ScmLambda (params', Opt opt, expr) -> ScmLambda'(params', Opt opt, (run expr (params'@[opt]) ((params::env))))
+      | ScmLambda (params', Opt (opt), expr) -> 
+        ScmLambda' (params', Opt (opt), tag_lexical_address (params'@[opt]) ((params@[opt])::env) expr)
       | ScmApplic (proc, args) ->
         ScmApplic' (run proc params env,
                     List.map (fun arg -> run arg params env) args,
@@ -1288,22 +1289,21 @@ module Semantic_Analysis : SEMANTIC_ANALYSIS = struct
       ScmLambda' (params, Simple, new_body)
     (* add support for lambda-opt (ADDED)*)
     | ScmLambda' (params, Opt opt, expr') ->
-      let params' = params @ [opt] in
       let box_these =
         List.filter
-          (fun param -> should_box_var param expr' params')
-          params' in
+          (fun param -> should_box_var param expr' params)
+          params in
       let new_body = 
         List.fold_left
           (fun body name -> box_sets_and_gets name body)
           (auto_box expr')
           box_these in
-      let new_sets = make_sets box_these params' in
+      let new_sets = make_sets box_these params in
       let new_body = 
         match box_these, new_body with
         | [], _ -> new_body
         | _, ScmSeq' exprs -> ScmSeq' (new_sets @ exprs)
-        | _, _ -> ScmSeq' (new_sets @ [new_body]) in
+        | _, _ -> ScmSeq'(new_sets @ [new_body]) in
       ScmLambda' (params, Opt opt, new_body)
     | ScmApplic' (proc, args, app_kind) ->
       ScmApplic' (auto_box proc, List.map auto_box args, app_kind);;
@@ -1563,6 +1563,7 @@ module Code_Generation (* : CODE_GENERATION *) = struct
       ("return", "L_code_ptr_return");
     ];;  
 
+
   (*FINAL PROJECT NEED TO BUILD: collect_constants *) (* DONE (I think) *)
   let collect_constants =
     let rec run = function
@@ -1654,7 +1655,6 @@ module Code_Generation (* : CODE_GENERATION *) = struct
       let car_addr = ConstPtr (search_constant_address car table) in
       let cdr_addr = ConstPtr (search_constant_address cdr table) in
       ([RTTI "T_pair"; car_addr; cdr_addr], 1 + 2 * word_size)
-
 
   let make_constants_table =
     let rec run table loc = function
@@ -2025,7 +2025,7 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         and label_arity_more = make_lambda_opt_arity_more ()
         and label_stack_ok = make_lambda_opt_stack_ok ()
         and label_end = make_lambda_opt_end ()
-        and label_loop_shrink = make_lambda_opt_loop () in
+        and label_loop = make_lambda_opt_loop () in
 
         (* Allocate memory for the closure structure *)
         "\tmov rdi, (1 + 8 + 8)\t; sob closure\n"
@@ -2074,40 +2074,32 @@ module Code_Generation (* : CODE_GENERATION *) = struct
 
         (* Handle the body of the lambda with optional arguments *)
         ^ (Printf.sprintf "%s:\n" label_code)
-        ^ (Printf.sprintf "\tcmp qword [rsp + 8 * 2], %d\n" (List.length params'))
-        ^ (Printf.sprintf "\tje %s\n" label_arity_exact)
-        ^ (Printf.sprintf "\tjg %s\n" label_arity_more)
-        ^ "\tpush qword [rsp + 8 * 2]\n"
-        ^ (Printf.sprintf "\tpush %d\n" (List.length params'))
-        ^ "\tjmp L_error_incorrect_arity_opt\n"
-
-        (* Case 1: Exact arity - Add an empty list for the optional arguments *)
-        ^ (Printf.sprintf "%s:\n" label_arity_exact)
-        ^ "\tlea rsp, [rsp - 8]\n"
-        ^ "\tmov qword [rsp], sob_nil\n"
-        ^ (Printf.sprintf "\tjmp %s\n" label_stack_ok)
-
-        (* Case 2: More arguments - Pack extra arguments into a list *)
-        ^ (Printf.sprintf "%s:\n" label_arity_more)
         ^ "\tmov r8, qword [rsp + 8 * 2] ; number of arguments\n"
-        ^ "\tmov r9, rsp\n"
         ^ (Printf.sprintf "\tsub r8, %d ; calculate the number of optional arguments\n" (List.length params'))
-        ^ "\tlea r10, [rsp + 8 * r8 + 8 * 2]\n"
-        ^ "\tmov rcx, r8\n"
-        ^ "\tmov rax, sob_nil\n"
-        ^ (Printf.sprintf "%s:\n" label_loop_shrink)
+        ^ "\tcmp r8, 0\n"
+        ^ (Printf.sprintf "\tje %s ; no optional arguments, set to nil\n" label_arity_exact)
+        ^ "\tmov rdx, sob_nil ; initialize the optional args list to sob_nil\n"
+        ^ "\tlea r9, [rsp + 8 * r8 + 8 * 2] ; r9 points to the last optional argument\n"
+        ^ "\tmov rcx, r8 ; rcx holds the number of optional arguments\n"
+        ^ (Printf.sprintf "%s:\t; pack optional arguments into a list\n" label_loop)
         ^ "\tcmp rcx, 0\n"
-        ^ (Printf.sprintf "\tje %s\n" label_stack_ok)
-        ^ "\tsub r10, 8\n"
-        ^ "\tmov rbx, qword [r10]\n"
-        ^ "\tmov rdi, (1 + 8 + 8)\n"
+        ^ (Printf.sprintf "\tje %s ; stop when no more optional arguments\n" label_stack_ok)
+        ^ "\tmov rbx, qword [r9] ; load the current optional argument\n"
+        ^ "\tmov rdi, (1 + 8 + 8) ; allocate memory for a pair\n"
         ^ "\tcall malloc\n"
-        ^ "\tmov byte [rax], T_pair\n"
-        ^ "\tmov qword [rax + 1], rbx\n" (* Fixed SOB_PAIR_CAR macro *)
-        ^ "\tmov qword [rax + 1 + 8], rdx\n" (* Fixed SOB_PAIR_CDR macro *)
-        ^ "\tmov rdx, rax\n"
-        ^ "\tdec rcx\n"
-        ^ (Printf.sprintf "\tjmp %s\n" label_loop_shrink)
+        ^ "\tmov byte [rax], T_pair ; mark as pair\n"
+        ^ "\tmov SOB_PAIR_CAR(rax), rbx ; set CAR to the current argument\n"
+        ^ "\tmov SOB_PAIR_CDR(rax), rdx ; set CDR to the current list (rdx)\n"
+        ^ "\tmov rdx, rax ; update the list pointer to the new pair\n"
+        ^ "\tsub r9, 8 ; move to the previous argument\n"
+        ^ "\tdec rcx ; decrement the counter\n"
+        ^ (Printf.sprintf "\tjmp %s\n" label_loop)
+
+        (* Case when there are no optional arguments *)
+        ^ (Printf.sprintf "%s:\n" label_arity_exact)
+        ^ "\tmov rdx, sob_nil ; no optional arguments, set rdx to sob_nil\n"
+        ^ (Printf.sprintf "%s:\n" label_stack_ok)
+
 
         (* Finalize the setup *)
         ^ (Printf.sprintf "%s:\n" label_stack_ok)
@@ -2116,6 +2108,11 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         ^ "\tleave\n"
         ^ (Printf.sprintf "\tret AND_KILL_FRAME(%d)\n" ((List.length params') + 1))
         ^ (Printf.sprintf "%s:\n" label_end)
+
+
+
+          (* End label *)
+          (Printf.sprintf "%s:\n" label_end)
       | ScmApplic' (proc, args, Non_Tail_Call) -> 
         let args_code =
           String.concat ""
@@ -2134,53 +2131,80 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         ^ "\tjne L_error_non_closure\n"
         ^ "\tpush SOB_CLOSURE_ENV(rax)\n"
         ^ "\tcall SOB_CLOSURE_CODE(rax)\n"
-
-
+      | ScmApplic' (proc, args, Non_Tail_Call) -> 
+        let args_code =
+          String.concat ""
+            (List.map
+               (fun arg ->
+                  let arg_code = run params env arg in
+                  arg_code
+                  ^ "\tpush rax\n")
+               (List.rev args)) in
+        let proc_code = run params env proc in
+        "\t; preparing a non-tail-call\n"
+        ^ args_code
+        ^ (Printf.sprintf "\tpush %d\t; arg count\n" (List.length args))
+        ^ proc_code
+        ^ "\tcmp byte [rax], T_closure\n"
+        ^ "\tjne L_error_non_closure\n"
+        ^ "\tpush SOB_CLOSURE_ENV(rax)\n"
+        ^ "\tcall SOB_CLOSURE_CODE(rax)\n"
         | ScmApplic' (proc, args, Tail_Call) ->
+          (* Generate code for arguments in reverse order *)
           let args_code =
             String.concat ""
-              (List.map
+              (List.rev_map
                  (fun arg ->
-                    let arg_code = run params env arg in
-                    arg_code ^ "\tpush rax\n")
-                 (List.rev args)) in
+                   let arg_code = run params env arg in
+                   arg_code ^ "\tpush rax\n")
+                 args) in
+        
+          (* Generate code for evaluating the procedure *)
           let proc_code = run params env proc in
-          let label_recycle_loop = make_tc_applic_recycle_frame_loop () in
-          let label_recycle_done = make_tc_applic_recycle_frame_done () in
-          "\t; Begin tail-call preparation\n"
+        
+          (* Generate unique labels for the frame recycling loop *)
+          let label_recycle_frame_loop = make_tc_applic_recycle_frame_loop () in
+          let label_recycle_frame_done = make_tc_applic_recycle_frame_done () in
+        
+          (* Total number of arguments *)
+          let num_args = List.length args in
+        
+          (* Final assembly code *)
+          "\t; Tail-call optimization: preparing arguments and procedure\n"
           ^ args_code
-          ^ (Printf.sprintf "\tpush %d\t; Number of arguments\n" (List.length args))
+          ^ Printf.sprintf "\tpush %d\t; Push the number of arguments\n" num_args
           ^ proc_code
-          ^ "\t; Verify the procedure is a closure\n"
+          ^ "\t; Ensure the procedure is a valid closure\n"
           ^ "\tcmp byte [rax], T_closure\n"
           ^ "\tjne L_error_non_closure\n"
+          ^ "\t; Push the closure's environment\n"
           ^ "\tpush SOB_CLOSURE_ENV(rax)\n"
-          ^ "\t; Start recycling the current frame\n"
-          ^ "\tmov rbx, [rbp]\t; Old frame pointer\n"
-          ^ (Printf.sprintf "\tmov rcx, %d + 4\t; Total slots (args + 4)\n" (List.length args))
-          ^ "\tlea rdi, [rbx - 8]\t; Source: Current frame (bottom-up)\n"
-          ^ "\tlea rsi, [rsp - 8 * rcx]\t; Destination: New frame (top-down)\n"
-          ^ (Printf.sprintf "%s:\n" label_recycle_loop)
+          ^ "\t; Save the old return address\n"
+          ^ "\tpush qword [rbp + 8 * 1]\n"
+          ^ "\t; Calculate the total number of items to recycle (args + metadata)\n"
+          ^ Printf.sprintf "\tmov rcx, %d\n" (num_args + 3) (* Number of items to recycle *)
+          ^ "\tmov rsi, rbp\t; Source pointer (old frame pointer)\n"
+          ^ "\tmov rdi, rsp\t; Start with current stack pointer\n"
+          ^ "\tsub rdi, rcx\t; Adjust destination for new frame base\n"
+          ^ "\tsal rcx, 3\t; Convert item count to bytes (multiply by 8)\n"
+          ^ "\tsub rdi, rcx\t; Finalize destination pointer calculation\n"
+          ^ (Printf.sprintf "%s:\n" label_recycle_frame_loop)
           ^ "\tcmp rcx, 0\n"
-          ^ (Printf.sprintf "\tje %s\n" label_recycle_done)
-          ^ "\tmov rdx, qword [rdi]\n"
-          ^ "\tmov qword [rsi], rdx\n"
-          ^ "\tdec rcx\n"
-          ^ "\tsub rdi, 8\n"
+          ^ (Printf.sprintf "\tje %s\n" label_recycle_frame_done)
+          ^ "\tmov rdx, qword [rsi]\n"
+          ^ "\tmov qword [rdi], rdx\n"
           ^ "\tsub rsi, 8\n"
-          ^ (Printf.sprintf "\tjmp %s\n" label_recycle_loop)
-          ^ (Printf.sprintf "%s:\n" label_recycle_done)
-          ^ "\t; Adjust stack and base pointers\n"
-          ^ "\tlea rsp, [rsi + 8]\n"
+          ^ "\tsub rdi, 8\n"
+          ^ "\tsub rcx, 8\n"
+          ^ (Printf.sprintf "\tjmp %s\n" label_recycle_frame_loop)
+          ^ (Printf.sprintf "%s:\n" label_recycle_frame_done)
+          ^ "\t; Adjust the stack pointer and restore the frame pointer\n"
+          ^ "\tmov rsp, rdi\n"
           ^ "\tpop rbp\n"
-          ^ "\t; Perform the tail-call jump\n"
+          ^ "\t; Jump to the procedure's code\n"
           ^ "\tjmp SOB_CLOSURE_CODE(rax)\n"
         
 
-        
-        
-      
-        
     and runs params env exprs' =
       List.map (fun expr' -> run params env expr') exprs' in
     let codes = runs 0 0 exprs' in
@@ -2233,4 +2257,5 @@ end;; (* end of Code_Generation struct *)
 (* end-of-input *)
 
 let test = Code_Generation.compile_and_run_scheme_string "testing/goo";;
+
 
