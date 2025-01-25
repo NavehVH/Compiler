@@ -479,6 +479,9 @@ L_constants:
 	; L_constants + 1537:
 	db T_integer	; 5
 	dq 5
+	; L_constants + 1546:
+	db T_integer	; 6
+	dq 6
 
 
 extern printf, fprintf, stdout, stderr, fwrite, exit, putchar, getchar
@@ -492,6 +495,8 @@ main:
         enter 0, 0
 
 	; preparing a non-tail-call
+	mov rax, L_constants + 1546
+	push rax
 	mov rax, L_constants + 1537
 	push rax
 	mov rax, L_constants + 1528
@@ -502,79 +507,78 @@ main:
 	push rax
 	mov rax, L_constants + 1501
 	push rax
-	push 5	; arg count
-	mov rdi, (1 + 8 + 8)	; sob closure
+	push 6	; arg count
+	mov rdi, (1 + 8 + 8)	; Allocate memory for the closure structure
 	call malloc
-	push rax
-	mov rdi, 8 * 2	; new rib
+	push rax	; Save closure pointer on the stack
+	mov rdi, 8 * 2	; Allocate memory for the new rib
 	call malloc
-	push rax
-	mov rdi, 8 * 1	; extended env
+	push rax	; Save new rib pointer on the stack
+	mov rdi, 8 * 1	; Allocate memory for the extended environment
 	call malloc
-	mov rdi, ENV
-	mov rsi, 0
-	mov rdx, 1
-.L_lambda_opt_env_loop_0001:	; ext_env[i + 1] <-- env[i]
-	cmp rsi, 0
-	je .L_lambda_opt_env_end_0001
-	mov rcx, qword [rdi + 8 * rsi]
-	mov qword [rax + 8 * rdx], rcx
-	inc rsi
-	inc rdx
-	jmp .L_lambda_opt_env_loop_0001
+	mov rdi, ENV	; Load current environment pointer
+	mov rsi, 0	; Initialize loop index for copying environment
+	mov rdx, 1	; Offset for the extended environment
+.L_lambda_opt_env_loop_0001:	; Copy current environment to extended environment
+	cmp rsi, 0	; Check if all environment frames are copied
+	je .L_lambda_opt_env_end_0001	; Exit loop if done
+	mov rcx, qword [rdi + 8 * rsi]	; Load environment frame
+	mov qword [rax + 8 * rdx], rcx	; Store frame in extended environment
+	inc rsi	; Increment loop index
+	inc rdx	; Increment offset for extended environment
+	jmp .L_lambda_opt_env_loop_0001	; Repeat loop
 .L_lambda_opt_env_end_0001:
-	pop rbx
-	mov rsi, 0
-.L_lambda_opt_params_loop_0001:	; copy params
-	cmp rsi, 2
-	je .L_lambda_opt_params_end_0001
-	mov rdx, qword [rbp + 8 * rsi + 8 * 4]
-	mov qword [rbx + 8 * rsi], rdx
-	inc rsi
-	jmp .L_lambda_opt_params_loop_0001
+	pop rbx	; Restore new rib pointer
+	mov rsi, 0	; Initialize loop index for parameters
+.L_lambda_opt_params_loop_0001:	; Copy parameters to the new rib
+	cmp rsi, 2	; Check if all parameters are copied
+	je .L_lambda_opt_params_end_0001	; Exit loop if done
+	mov rdx, qword [rbp + 8 * rsi + 8 * 4]	; Load parameter from caller's frame
+	mov qword [rbx + 8 * rsi], rdx	; Store parameter in new rib
+	inc rsi	; Increment loop index
+	jmp .L_lambda_opt_params_loop_0001	; Repeat loop
 .L_lambda_opt_params_end_0001:
-	mov qword [rax], rbx	; ext_env[0] <-- new_rib
-	mov rbx, rax
-	pop rax
-	mov byte [rax], T_closure
-	mov SOB_CLOSURE_ENV(rax), rbx
-	mov SOB_CLOSURE_CODE(rax), .L_lambda_opt_code_0001
-	jmp .L_lambda_opt_end_0001
+	mov qword [rax], rbx	; Set new rib in the extended environment
+	mov rbx, rax	; Store extended environment pointer in rbx
+	pop rax	; Restore closure pointer
+	mov byte [rax], T_closure	; Mark as a closure
+	mov SOB_CLOSURE_ENV(rax), rbx	; Set closure environment
+	mov SOB_CLOSURE_CODE(rax), .L_lambda_opt_code_0001	; Set closure code pointer
+	jmp .L_lambda_opt_end_0001	; Jump to end
 .L_lambda_opt_code_0001:
-	cmp qword [rsp + 8 * 2], 2
-	je .L_lambda_opt_arity_check_exact_0001
-	jg .L_lambda_opt_arity_check_more_0001
-	push qword [rsp + 8 * 2]
-	push 2
-	jmp L_error_incorrect_arity_opt
+	cmp qword [rsp + 8 * 2], 2	; Compare number of arguments to expected count
+	je .L_lambda_opt_arity_check_exact_0001	; If exact match, handle as exact arity
+	jg .L_lambda_opt_arity_check_more_0001	; If more, handle optional arguments
+	push qword [rsp + 8 * 2]	; Push argument count
+	push 2	; Push expected count
+	jmp L_error_incorrect_arity_opt	; Jump to error handler
 .L_lambda_opt_arity_check_exact_0001:
-	lea rsp, [rsp - 8]
-	mov qword [rsp], sob_nil
-	jmp .L_lambda_opt_stack_adjusted_0001
+	lea rsp, [rsp - 8]	; Allocate space for sob_nil
+	mov qword [rsp], sob_nil	; Store sob_nil
+	jmp .L_lambda_opt_stack_adjusted_0001	; Jump to stack adjustment
 .L_lambda_opt_arity_check_more_0001:
-	mov r8, qword [rsp + 8 * 2] ; number of arguments
-	mov r9, rsp
-	sub r8, 2 ; calculate the number of optional arguments
-	lea r10, [rsp + 8 * r8 + 8 * 2]
-	mov rcx, r8
-	mov rax, sob_nil
+	mov rsi, qword [rsp + 8 * 2] ; rsi <-- number of arguments
+	mov rdi, rsp ; rdi <-- current stack pointer
+	sub rsi, 2 ; rsi <-- number of optional arguments (total_args - fixed_args)
+	lea rbx, [rsp + 8 * rsi + 8 * 2] ; rbx <-- address of the last optional argument
+	mov rcx, rsi ; rcx <-- counter for optional arguments
+	mov rax, sob_nil ; rax <-- initialize the list as sob_nil (empty list)
 .L_lambda_opt_stack_shrink_loop_0001:
-	cmp rcx, 0
-	je .L_lambda_opt_stack_adjusted_0001
-	sub r10, 8
-	mov rbx, qword [r10]
-	mov rdi, (1 + 8 + 8)
-	call malloc
-	mov byte [rax], T_pair
-	mov qword [rax + 1], rbx
-	mov qword [rax + 1 + 8], rdx
-	mov rdx, rax
-	dec rcx
-	jmp .L_lambda_opt_stack_shrink_loop_0001
+	cmp rcx, 0 ; check if there are more arguments to process
+	je .L_lambda_opt_stack_adjusted_0001 ; if no more arguments, jump to stack adjustment
+	sub rbx, 8 ; rbx <-- move to the next optional argument
+	mov rdx, qword [rbx] ; rdx <-- load the current argument
+	mov rdi, (1 + 8 + 8) ; rdi <-- size of a T_pair object
+	call malloc ; allocate memory for the T_pair object
+	mov byte [rax], T_pair ; rax[0] <-- set as T_pair
+	mov qword [rax + 1], rdx ; rax[1] <-- store the current argument as CAR
+	mov qword [rax + 1 + 8], rax ; rax[2] <-- store the rest of the list as CDR
+	dec rcx ; rcx <-- decrement the counter
+	jmp .L_lambda_opt_stack_shrink_loop_0001 ; repeat for the next optional argument
 .L_lambda_opt_stack_adjusted_0001:
-	enter 0, 0
+	enter 0, 0 ; setup frame for the procedure
 	mov rax, PARAM(2)	; param c
-	leave
+	leave ; restore the previous frame
 	ret AND_KILL_FRAME(3)
 .L_lambda_opt_end_0001:
 	cmp byte [rax], T_closure
