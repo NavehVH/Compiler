@@ -465,23 +465,42 @@ L_constants:
 	dq 6
 	db 0x72, 0x65, 0x74, 0x75, 0x72, 0x6E
 	; L_constants + 1501:
+	db T_string	; "apply"
+	dq 5
+	db 0x61, 0x70, 0x70, 0x6C, 0x79
+	; L_constants + 1515:
+	db T_string	; "+"
+	dq 1
+	db 0x2B
+	; L_constants + 1525:
 	db T_integer	; 1
 	dq 1
-	; L_constants + 1510:
+	; L_constants + 1534:
 	db T_integer	; 2
 	dq 2
-	; L_constants + 1519:
+	; L_constants + 1543:
 	db T_integer	; 3
 	dq 3
-	; L_constants + 1528:
-	db T_integer	; 4
-	dq 4
-	; L_constants + 1537:
-	db T_integer	; 5
-	dq 5
-	; L_constants + 1546:
-	db T_integer	; 6
-	dq 6
+	; L_constants + 1552:
+	db T_pair	; (3)
+	dq L_constants + 1543, L_constants + 1
+	; L_constants + 1569:
+	db T_pair	; (2 3)
+	dq L_constants + 1534, L_constants + 1552
+	; L_constants + 1586:
+	db T_pair	; (1 2 3)
+	dq L_constants + 1525, L_constants + 1569
+free_var_0:	; location of +
+	dq .undefined_object
+.undefined_object:
+	db T_undefined
+	dq L_constants + 1515
+
+free_var_1:	; location of apply
+	dq .undefined_object
+.undefined_object:
+	db T_undefined
+	dq L_constants + 1501
 
 
 extern printf, fprintf, stdout, stderr, fwrite, exit, putchar, getchar
@@ -495,92 +514,16 @@ main:
         enter 0, 0
 
 	; preparing a non-tail-call
-	mov rax, L_constants + 1546
+	mov rax, L_constants + 1586
 	push rax
-	mov rax, L_constants + 1537
+	mov rax, qword [free_var_0]	; free var +
+	cmp byte [rax], T_undefined
+	je L_error_fvar_undefined
 	push rax
-	mov rax, L_constants + 1528
-	push rax
-	mov rax, L_constants + 1519
-	push rax
-	mov rax, L_constants + 1510
-	push rax
-	mov rax, L_constants + 1501
-	push rax
-	push 6	; arg count
-	mov rdi, (1 + 8 + 8)	; Allocate memory for the closure structure
-	call malloc
-	push rax	; Save closure pointer on the stack
-	mov rdi, 8 * 2	; Allocate memory for the new rib
-	call malloc
-	push rax	; Save new rib pointer on the stack
-	mov rdi, 8 * 1	; Allocate memory for the extended environment
-	call malloc
-	mov rdi, ENV	; Load current environment pointer
-	mov rsi, 0	; Initialize loop index for copying environment
-	mov rdx, 1	; Offset for the extended environment
-.L_lambda_opt_env_loop_0001:	; Copy current environment to extended environment
-	cmp rsi, 0	; Check if all environment frames are copied
-	je .L_lambda_opt_env_end_0001	; Exit loop if done
-	mov rcx, qword [rdi + 8 * rsi]	; Load environment frame
-	mov qword [rax + 8 * rdx], rcx	; Store frame in extended environment
-	inc rsi	; Increment loop index
-	inc rdx	; Increment offset for extended environment
-	jmp .L_lambda_opt_env_loop_0001	; Repeat loop
-.L_lambda_opt_env_end_0001:
-	pop rbx	; Restore new rib pointer
-	mov rsi, 0	; Initialize loop index for parameters
-.L_lambda_opt_params_loop_0001:	; Copy parameters to the new rib
-	cmp rsi, 2	; Check if all parameters are copied
-	je .L_lambda_opt_params_end_0001	; Exit loop if done
-	mov rdx, qword [rbp + 8 * rsi + 8 * 4]	; Load parameter from caller's frame
-	mov qword [rbx + 8 * rsi], rdx	; Store parameter in new rib
-	inc rsi	; Increment loop index
-	jmp .L_lambda_opt_params_loop_0001	; Repeat loop
-.L_lambda_opt_params_end_0001:
-	mov qword [rax], rbx	; Set new rib in the extended environment
-	mov rbx, rax	; Store extended environment pointer in rbx
-	pop rax	; Restore closure pointer
-	mov byte [rax], T_closure	; Mark as a closure
-	mov SOB_CLOSURE_ENV(rax), rbx	; Set closure environment
-	mov SOB_CLOSURE_CODE(rax), .L_lambda_opt_code_0001	; Set closure code pointer
-	jmp .L_lambda_opt_end_0001	; Jump to end
-.L_lambda_opt_code_0001:
-	cmp qword [rsp + 8 * 2], 2	; Compare number of arguments to expected count
-	je .L_lambda_opt_arity_check_exact_0001	; If exact match, handle as exact arity
-	jg .L_lambda_opt_arity_check_more_0001	; If more, handle optional arguments
-	push qword [rsp + 8 * 2]	; Push argument count
-	push 2	; Push expected count
-	jmp L_error_incorrect_arity_opt	; Jump to error handler
-.L_lambda_opt_arity_check_exact_0001:
-	lea rsp, [rsp - 8]	; Allocate space for sob_nil
-	mov qword [rsp], sob_nil	; Store sob_nil
-	jmp .L_lambda_opt_stack_adjusted_0001	; Jump to stack adjustment
-.L_lambda_opt_arity_check_more_0001:
-	mov rsi, qword [rsp + 8 * 2] ; rsi <-- number of arguments
-	mov rdi, rsp ; rdi <-- current stack pointer
-	sub rsi, 2 ; rsi <-- number of optional arguments (total_args - fixed_args)
-	lea rbx, [rsp + 8 * rsi + 8 * 2] ; rbx <-- address of the last optional argument
-	mov rcx, rsi ; rcx <-- counter for optional arguments
-	mov rax, sob_nil ; rax <-- initialize the list as sob_nil (empty list)
-.L_lambda_opt_stack_shrink_loop_0001:
-	cmp rcx, 0 ; check if there are more arguments to process
-	je .L_lambda_opt_stack_adjusted_0001 ; if no more arguments, jump to stack adjustment
-	sub rbx, 8 ; rbx <-- move to the next optional argument
-	mov rdx, qword [rbx] ; rdx <-- load the current argument
-	mov rdi, (1 + 8 + 8) ; rdi <-- size of a T_pair object
-	call malloc ; allocate memory for the T_pair object
-	mov byte [rax], T_pair ; rax[0] <-- set as T_pair
-	mov qword [rax + 1], rdx ; rax[1] <-- store the current argument as CAR
-	mov qword [rax + 1 + 8], rax ; rax[2] <-- store the rest of the list as CDR
-	dec rcx ; rcx <-- decrement the counter
-	jmp .L_lambda_opt_stack_shrink_loop_0001 ; repeat for the next optional argument
-.L_lambda_opt_stack_adjusted_0001:
-	enter 0, 0 ; setup frame for the procedure
-	mov rax, PARAM(2)	; param c
-	leave ; restore the previous frame
-	ret AND_KILL_FRAME(3)
-.L_lambda_opt_end_0001:
+	push 2	; arg count
+	mov rax, qword [free_var_1]	; free var apply
+	cmp byte [rax], T_undefined
+	je L_error_fvar_undefined
 	cmp byte [rax], T_closure
 	jne L_error_non_closure
 	push SOB_CLOSURE_ENV(rax)
@@ -1473,7 +1416,37 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-;;; fill in for final project!
+    ;; Arguments:
+    ;; rdi = function to apply
+    ;; rsi = pointer to the list of arguments
+    
+    ;; 1. Save caller's registers
+    push rbp
+    mov rbp, rsp
+    push rbx
+
+    ;; 2. Unpack the argument list
+    mov rbx, rsi       ;; rbx points to the start of the argument list
+    mov rcx, 0         ;; rcx will count the number of arguments
+
+L_unpack_loop:
+    cmp rbx, 0         ;; Check if we reached the end of the list (NULL)
+    je L_call_function ;; If yes, jump to function call
+    push qword [rbx]   ;; Push the current argument onto the stack
+    mov rbx, [rbx+8]   ;; Move to the next argument in the list
+    inc rcx            ;; Increment the argument count
+    jmp L_unpack_loop  ;; Continue unpacking
+
+L_call_function:
+    ;; 3. Call the function
+    mov rdi, rcx       ;; First argument: number of arguments
+    call rdi           ;; Call the function
+
+    ;; 4. Restore caller's registers and return
+    pop rbx
+    mov rsp, rbp
+    pop rbp
+    ret
 
 L_code_ptr_is_null:
         enter 0, 0

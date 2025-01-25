@@ -883,7 +883,37 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-;;; fill in for final project!
+    ;; Arguments:
+    ;; rdi = function to apply
+    ;; rsi = pointer to the list of arguments
+    
+    ;; 1. Save caller's registers
+    push rbp
+    mov rbp, rsp
+    push rbx
+
+    ;; 2. Unpack the argument list
+    mov rbx, rsi       ;; rbx points to the start of the argument list
+    mov rcx, 0         ;; rcx will count the number of arguments
+
+L_unpack_loop:
+    cmp rbx, 0         ;; Check if we reached the end of the list (NULL)
+    je L_call_function ;; If yes, jump to function call
+    push qword [rbx]   ;; Push the current argument onto the stack
+    mov rbx, [rbx+8]   ;; Move to the next argument in the list
+    inc rcx            ;; Increment the argument count
+    jmp L_unpack_loop  ;; Continue unpacking
+
+L_call_function:
+    ;; 3. Call the function
+    mov rdi, rcx       ;; First argument: number of arguments
+    call rdi           ;; Call the function
+
+    ;; 4. Restore caller's registers and return
+    pop rbx
+    mov rsp, rbp
+    pop rbp
+    ret
 
 L_code_ptr_is_null:
         enter 0, 0
