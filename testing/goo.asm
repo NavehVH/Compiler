@@ -465,42 +465,11 @@ L_constants:
 	dq 6
 	db 0x72, 0x65, 0x74, 0x75, 0x72, 0x6E
 	; L_constants + 1501:
-	db T_string	; "apply"
-	dq 5
-	db 0x61, 0x70, 0x70, 0x6C, 0x79
-	; L_constants + 1515:
-	db T_string	; "+"
-	dq 1
-	db 0x2B
-	; L_constants + 1525:
 	db T_integer	; 1
 	dq 1
-	; L_constants + 1534:
+	; L_constants + 1510:
 	db T_integer	; 2
 	dq 2
-	; L_constants + 1543:
-	db T_integer	; 3
-	dq 3
-	; L_constants + 1552:
-	db T_pair	; (3)
-	dq L_constants + 1543, L_constants + 1
-	; L_constants + 1569:
-	db T_pair	; (2 3)
-	dq L_constants + 1534, L_constants + 1552
-	; L_constants + 1586:
-	db T_pair	; (1 2 3)
-	dq L_constants + 1525, L_constants + 1569
-free_var_0:	; location of +
-	dq .undefined_object
-.undefined_object:
-	db T_undefined
-	dq L_constants + 1515
-
-free_var_1:	; location of apply
-	dq .undefined_object
-.undefined_object:
-	db T_undefined
-	dq L_constants + 1501
 
 
 extern printf, fprintf, stdout, stderr, fwrite, exit, putchar, getchar
@@ -514,16 +483,72 @@ main:
         enter 0, 0
 
 	; preparing a non-tail-call
-	mov rax, L_constants + 1586
+	mov rax, L_constants + 1510
 	push rax
-	mov rax, qword [free_var_0]	; free var +
-	cmp byte [rax], T_undefined
-	je L_error_fvar_undefined
+	mov rax, L_constants + 1501
 	push rax
 	push 2	; arg count
-	mov rax, qword [free_var_1]	; free var apply
-	cmp byte [rax], T_undefined
-	je L_error_fvar_undefined
+	mov rdi, (1 + 8 + 8)	; sob closure
+	call malloc
+	push rax
+	mov rdi, 8 * 0	; new rib
+	call malloc
+	push rax
+	mov rdi, 8 * 1	; extended env
+	call malloc
+	mov rdi, ENV
+	mov rsi, 0
+	mov rdx, 1
+.L_lambda_opt_env_loop_0001:	; ext_env[i + 1] <-- env[i]
+	cmp rsi, 0
+	je .L_lambda_opt_env_end_0001
+	mov rcx, qword [rdi + 8 * rsi]
+	mov qword [rax + 8 * rdx], rcx
+	inc rsi
+	inc rdx
+	jmp .L_lambda_opt_env_loop_0001
+.L_lambda_opt_env_end_0001:
+	pop rbx
+	mov rsi, 0
+.L_lambda_opt_params_loop_0001:	; copy params
+	cmp rsi, 0
+	je .L_lambda_opt_params_end_0001
+	mov rdx, qword [rbp + 8 * rsi + 8 * 4]
+	mov qword [rbx + 8 * rsi], rdx
+	inc rsi
+	jmp .L_lambda_opt_params_loop_0001
+.L_lambda_opt_params_end_0001:
+	mov qword [rax], rbx	; ext_env[0] <-- new_rib 
+	mov rbx, rax
+	pop rax
+	mov byte [rax], T_closure
+	mov SOB_CLOSURE_ENV(rax), rbx
+	mov SOB_CLOSURE_CODE(rax), .L_lambda_opt_code_0001
+	jmp .L_lambda_opt_end_0001
+.L_lambda_opt_code_0001:
+	; Load number of arguments from stack
+	cmp qword [rsp + 8 * 3], 2
+	je .L_lambda_opt_arity_check_exact_0001	; Jump if arity matches
+	jg .L_lambda_opt_arity_check_more_0001	; Jump if more arguments passed
+	; If no match, jump to error
+	push qword [rsp + 8 * 3]	; Push actual argument count
+	push 2
+	jmp L_error_incorrect_arity_opt
+.L_lambda_opt_arity_check_exact_0001:
+	; Exact match case: Add an empty list for optional arguments
+	sub rsp, 8 * 1	; Allocate space for the empty list
+	mov qword [rsp], sob_nil	; Place the empty list on the stack
+	add qword [rsp + 8 * 3], 1	; Increment the argument count (n)
+	jmp .L_lambda_opt_stack_adjusted_0001
+.L_lambda_opt_arity_check_more_0001:
+	; Dummy label for arity_more - not implemented yet
+	jmp .L_lambda_opt_stack_adjusted_0001
+.L_lambda_opt_stack_adjusted_0001:
+	enter 0, 0
+	mov rax, PARAM(2)	; param c
+	leave
+	ret AND_KILL_FRAME(2)
+.L_lambda_opt_end_0001:	; new closure is in rax
 	cmp byte [rax], T_closure
 	jne L_error_non_closure
 	push SOB_CLOSURE_ENV(rax)
