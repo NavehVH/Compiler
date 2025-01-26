@@ -2069,28 +2069,63 @@ module Code_Generation (* : CODE_GENERATION *) = struct
 
         (* Adding Arity Comparison Logic *)
         ^ (Printf.sprintf "%s:\n" label_code)
-        ^ "\t; Load number of arguments from stack\n"
-        ^ (Printf.sprintf "\tcmp qword [rsp + 8 * 3], %d\n" (List.length params'))
+        ^ "\t; Load number of arguments from stack into r10\n"
+        ^ "\tmov r10, qword [rsp + 8 * 2]         ; Total number of arguments into r10\n"
+        ^ (Printf.sprintf "\tcmp r10, %d         ; Compare r10 (argument count) with required params\n" (List.length params'))
         ^ (Printf.sprintf "\tje %s\t; Jump if arity matches\n" label_arity_exact)
         ^ (Printf.sprintf "\tjg %s\t; Jump if more arguments passed\n" label_arity_more)
         ^ "\t; If no match, jump to error\n"
-        ^ "\tpush qword [rsp + 8 * 3]\t; Push actual argument count\n"
+        ^ "\tpush qword [rsp + 8 * 2]\t; Push actual argument count\n"
         ^ (Printf.sprintf "\tpush %d\n" (List.length params'))
         ^ "\tjmp L_error_incorrect_arity_opt\n"
 
-
-        (* Handle exact match *)
+          (* Handle exact match *)
         ^ (Printf.sprintf "%s:\n" label_arity_exact)
         ^ "\t; Exact match case: Add an empty list for optional arguments\n"
         ^ "\tsub rsp, 8 * 1\t; Allocate space for the empty list\n"
         ^ "\tmov qword [rsp], sob_nil\t; Place the empty list on the stack\n"
-        ^ "\tadd qword [rsp + 8 * 3], 1\t; Increment the argument count (n)\n"
+        ^ "\tadd qword [rsp + 8 * 2], 1\t; Increment the argument count (n)\n"
         ^ (Printf.sprintf "\tjmp %s\n" label_stack_ok)
 
-        (* Handle more arguments (dummy label for now) *)
+        (* handle more *)
         ^ (Printf.sprintf "%s:\n" label_arity_more)
-        ^ "\t; Dummy label for arity_more - not implemented yet\n"
-        ^ (Printf.sprintf "\tjmp %s\n" label_stack_ok)
+        ^ "\t; Handle extra arguments by creating a list and adjusting the stack\n"
+        ^ (Printf.sprintf "\tsub r10, %d         ; Calculate number of extra arguments\n" (List.length params'))
+        ^ "\tmov rbx, r10                         ; Save the number of extra arguments in rbx\n"
+        ^ (Printf.sprintf "\tlea rcx, [rsp + 8 * 4] ; rcx points to the first extra argument on the stack\n")
+        ^ "\tmov rdx, sob_nil                     ; Initialize rdx to nil for building the list\n"
+
+        (* Start loop to create the list of extra arguments *)
+        ^ (Printf.sprintf "%s:\n" label_loop_shrink)
+        ^ "\tcmp rbx, 0                           ; Check if there are more arguments to process\n"
+        ^ (Printf.sprintf "\tje %s               ; If no more arguments, finish the list\n" label_end)
+        ^ "\tmov rdi, qword [rcx]                 ; Load the current argument into rdi\n"
+        ^ "\tadd rcx, 8                          ; Move rcx to the next argument (lower on the stack)\n"
+        ^ "\tmov r8, rax                         ; Save closure in r8\n"
+        ^ "\tmov rdi, (1 + 8 + 8)                ; Allocate memory for the new pair (T_PAIR + CAR + CDR)\n"
+        ^ "\tcall malloc                         ; Allocate memory, result in rax\n"
+        ^ "\tmov byte [rax], T_pair              ; Mark as a pair\n"
+        ^ "\tmov SOB_PAIR_CAR(rax), rdi          ; CAR: current argument\n"
+        ^ "\tmov SOB_PAIR_CDR(rax), rdx          ; CDR: current list\n"
+        ^ "\tmov rdx, rax                        ; Update rdx to point to the new list\n"
+        ^ "\tmov rax, r8                         ; Restore closure from r8 to rax\n"
+
+        ^ "\tdec rbx                              ; Decrement the counter\n"
+        ^ "\tcmp rbx, 0                           ; Check if rbx (counter) is zero\n"
+          ^ (Printf.sprintf "\tjne %s               ; If not zero, continue processing the next argument\n" label_loop_shrink)
+          
+
+        (* Finish creating the list *)
+        ^ "\t; Place the created list in the correct location on the stack\n"
+        ^ (Printf.sprintf "\tmov qword [rsp + 8 * (4 + %d)], rdx ; Store the list in the variadic parameter slot\n" (List.length params'))
+
+        (* Update the argument count *)
+        ^ "\t; Update the argument count to reflect the adjusted stack\n"
+        ^ (Printf.sprintf "\tmov r10, %d         ; Set r10 to the updated argument count (required params + 1)\n" ((List.length params') + 1))
+        ^ "\tmov qword [rsp + 8 * 3], r10        ; Update the argument count on the stack\n"
+
+        (* Jump to the next stage *)
+        ^ (Printf.sprintf "\tjmp %s               ; Continue to the next stage\n" label_stack_ok)
 
 
 
