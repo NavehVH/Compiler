@@ -1,5 +1,4 @@
-
-        mov rdi, fmt_memory_usage
+mov rdi, fmt_memory_usage
         mov rsi, qword [top_of_memory]
         sub rsi, memory
         mov rax, 0
@@ -883,80 +882,7 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-    ; ----------------------------------------------------------------
-    ; 1 Standard function prologue (for demonstration).
-    ;    In Pascal convention, the *caller* has pushed our arguments
-    ;    in left->right order, but we still make our own stack frame.
-    ; ----------------------------------------------------------------
-    push    rbp
-    mov     rbp, rsp
-
-    ; ----------------------------------------------------------------
-    ; 2 Load the closure ("proc") from our argument list.
-    ;    Here we assume "proc" is at [rbp+16].
-    ; ----------------------------------------------------------------
-    mov     rax, [rbp + 16]          ; rax = closure object
-
-    ; Suppose the closure memory layout is:
-    ;   [0 bytes] : code pointer
-    ;   [8 bytes] : environment pointer
-    ;
-    ; We'll load these into rsi (code) and rdi (env),
-    ; the registers we plan to use for the tail jump.
-    mov     rsi, [rax]               ; rsi = code pointer
-    mov     rdi, [rax + 8]           ; rdi = environment pointer
-
-    ; ----------------------------------------------------------------
-    ; 3 Push our “fixed” arguments x0..x_{n-1}, left->right,
-    ;    so the callee can eventually do "ret <bytes>" to pop them.
-    ; 
-    ; Below is an example assuming 2 fixed arguments: x0, x1
-    ; stored at [rbp+24], [rbp+32], etc.  Adjust for your real n.
-    ; ----------------------------------------------------------------
-
-    ; push x0
-    mov     rcx, [rbp + 24]    ; x0
-    push    rcx
-
-    ; push x1
-    mov     rcx, [rbp + 32]    ; x1
-    push    rcx
-
-    ; ----------------------------------------------------------------
-    ; 4 Flatten the list s, which we assume is at [rbp+40],
-    ;    pushing each element in order (left->right).
-    ;    We'll store 's' in rbx and loop until NIL.
-    ; ----------------------------------------------------------------
-    mov     rbx, [rbp + 40]   ; s
-
-flatten_list_loop:
-    ; check if s == NIL
-    cmp     rbx, SCHEME_EMPTY_TAG
-    je      done_flattening
-
-    ; otherwise, rbx points to a cons cell:
-    ;   car is [rbx + 0]
-    ;   cdr is [rbx + 8]
-    ; push the car
-    mov     rcx, [rbx]
-    push    rcx
-
-    ; go to next cell
-    mov     rbx, [rbx + 8]
-    jmp     flatten_list_loop
-
-done_flattening:
-
-    ; ----------------------------------------------------------------
-    ; 5 Tail call to the code pointer in rsi. 
-    ;    Because this is a tail call, we:
-    ;      - discard our own frame
-    ;      - jump directly to rsi
-    ;    The callee will set up its own frame, eventually do "ret X"
-    ;    or dynamic pop to remove these newly pushed arguments.
-    ; ----------------------------------------------------------------
-    leave               ; pop rbp, restore caller’s stack frame
-    jmp     rsi         ; jump to the closure code pointer; no return
+;;; fill in for final project!
 
 L_code_ptr_is_null:
         enter 0, 0

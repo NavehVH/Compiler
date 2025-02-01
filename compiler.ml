@@ -1849,6 +1849,17 @@ module Code_Generation (* : CODE_GENERATION *) = struct
     make_make_label ".L_tc_recycle_frame_loop";;
   let make_tc_applic_recycle_frame_done =
     make_make_label ".L_tc_recycle_frame_done";;
+  let make_lambda_opt_loop_more = (* added *)
+    make_make_label ".L_lambda_opt_stack_shrink_loop_more";;
+  let make_lambda_opt_arg_list = (* added *)
+    make_make_label ".L_make_lambda_opt_arg_list";;
+  let make_lambda_opt_exact_finish = (* added *)
+    make_make_label ".L_make_lambda_opt_exact_finish";;
+  let make_lambda_opt_more_finish = (* added *)
+    make_make_label ".L_make_lambda_opt_more_finish";;
+    let make_lambda_opt_stack_fixed = (* added *)
+    make_make_label ".L_make_lambda_opt_stack_fixed";;
+
 
   (*FINAL PROJECT NEED TO BUILD: code_gen *)
   let code_gen exprs' =
@@ -2026,6 +2037,11 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         and label_stack_ok = make_lambda_opt_stack_ok ()
         and label_end = make_lambda_opt_end ()
         and label_loop_shrink = make_lambda_opt_loop ()
+        and label_loop_shrink_more = make_lambda_opt_loop_more();
+        and make_lambda_opt_arg_list = make_lambda_opt_arg_list();
+        and make_lambda_opt_exact_finish = make_lambda_opt_exact_finish();
+        and make_lambda_opt_more_finish = make_lambda_opt_more_finish();
+        and make_lambda_opt_stack_fixed = make_lambda_opt_stack_fixed();
         in
         (* Mayer code *)
         "\tmov rdi, (1 + 8 + 8)\t; sob closure\n"
@@ -2075,59 +2091,91 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         ^ (Printf.sprintf "\tje %s\t; Jump if arity matches\n" label_arity_exact)
         ^ (Printf.sprintf "\tjg %s\t; Jump if more arguments passed\n" label_arity_more)
         ^ "\t; If no match, jump to error\n"
-        ^ "\tpush qword [rsp + 8 * 2]\t; Push actual argument count\n"
-        ^ (Printf.sprintf "\tpush %d\n" (List.length params'))
         ^ "\tjmp L_error_incorrect_arity_opt\n"
 
-          (* Handle exact match *)
+        (* Handle exact *)
         ^ (Printf.sprintf "%s:\n" label_arity_exact)
-        ^ "\t; Exact match case: Add an empty list for optional arguments\n"
-        ^ "\tsub rsp, 8 * 1\t; Allocate space for the empty list\n"
-        ^ "\tmov qword [rsp], sob_nil\t; Place the empty list on the stack\n"
-        ^ "\tadd qword [rsp + 8 * 2], 1\t; Increment the argument count (n)\n"
+        ^ "\tmov r14, r10 ; num of iterations\n"
+        ^ "\tadd r14, 3\n"
+        ^ "\tmov r15, 0 ; index\n"
+
+        ^ "\tsub rsp, 8 ; Allocate one extra space on the stack\n"
+        ^ "\tmov qword [rsp], sob_nil ; Initialize the new space with sob_nil\n"
+        ^ (Printf.sprintf "\tjmp %s\n" label_loop_shrink)
+
+        ^ (Printf.sprintf "%s:\n" label_loop_shrink)
+        ^ "\tcmp r14, 0\n"
+        ^ (Printf.sprintf "\tjle %s\n" make_lambda_opt_exact_finish) 
+        ^ "\tmov r11, qword [rsp + 8 * (r15 + 1)] \n"
+        ^ "\tmov qword [rsp + 8 * r15], r11 \n"
+        ^ "\tdec r14 ; next iteration\n"
+        ^ "\tinc r15 ; next iteration\n"
+        ^ (Printf.sprintf "\tjmp %s\n" label_loop_shrink) 
+
+        ^ (Printf.sprintf "%s:\n" make_lambda_opt_exact_finish)
+        ^ "\tmov qword [rsp + 8 * r15], sob_nil ; Add sob_nil to the stack\n"
+        ^ "\tinc r10\n"
+        ^ "\tmov qword [rsp + 8 * 2], r10\n"
+
         ^ (Printf.sprintf "\tjmp %s\n" label_stack_ok)
 
-        (* handle more *)
-        ^ (Printf.sprintf "%s:\n" label_arity_more)
-        ^ "\t; Handle extra arguments by creating a list and adjusting the stack\n"
-        ^ (Printf.sprintf "\tsub r10, %d         ; Calculate number of extra arguments\n" (List.length params'))
-        ^ "\tmov rbx, r10                         ; Save the number of extra arguments in rbx\n"
-        ^ (Printf.sprintf "\tlea rcx, [rsp + 8 * 4] ; rcx points to the first extra argument on the stack\n")
-        ^ "\tmov rdx, sob_nil                     ; Initialize rdx to nil for building the list\n"
 
-        (* Start loop to create the list of extra arguments *)
-        ^ (Printf.sprintf "%s:\n" label_loop_shrink)
-        ^ "\tcmp rbx, 0                           ; Check if there are more arguments to process\n"
-        ^ (Printf.sprintf "\tje %s               ; If no more arguments, finish the list\n" label_end)
-        ^ "\tmov rdi, qword [rcx]                 ; Load the current argument into rdi\n"
-        ^ "\tadd rcx, 8                          ; Move rcx to the next argument (lower on the stack)\n"
-        ^ "\tmov r8, rax                         ; Save closure in r8\n"
-        ^ "\tmov rdi, (1 + 8 + 8)                ; Allocate memory for the new pair (T_PAIR + CAR + CDR)\n"
+        (* Handle more *)
+        ^ (Printf.sprintf "%s:\n" label_arity_more)
+        ^ "\tmov r14, r10 ; num of iterations\n"
+        ^ "\tmov r15, r10 ; num of iterations\n"
+        ^ (Printf.sprintf "\tmov r9, %d\n" (List.length params'))
+        ^ "\tsub r14, r9 ; Calculate number of extra arguments\n"
+        ^ "\tadd r9, r14 ; all args\n"
+        ^ "\tmov rdx, sob_nil ; Initialize the new space with sob_nil\n"
+        ^ (Printf.sprintf "\tjmp %s\n" make_lambda_opt_arg_list)
+
+        ^ (Printf.sprintf "%s:\n" make_lambda_opt_arg_list)
+        ^ "\tcmp r14, 0\n"
+        ^ (Printf.sprintf "\tjle %s\n" make_lambda_opt_stack_fixed) 
+        ^ "\tmov rdi, qword [rsp + 8 * (r9 + 2)] ; Load the current argument into rdi\n"
+        ^ "\tmov r8, rax                         ; Save closure pointer in r8\n"
+        ^ "\tmov r10, (1 + 8 + 8)                ; Allocate memory for the new pair (T_PAIR + CAR + CDR)\n"
         ^ "\tcall malloc                         ; Allocate memory, result in rax\n"
         ^ "\tmov byte [rax], T_pair              ; Mark as a pair\n"
-        ^ "\tmov SOB_PAIR_CAR(rax), rdi          ; CAR: current argument\n"
-        ^ "\tmov SOB_PAIR_CDR(rax), rdx          ; CDR: current list\n"
-        ^ "\tmov rdx, rax                        ; Update rdx to point to the new list\n"
-        ^ "\tmov rax, r8                         ; Restore closure from r8 to rax\n"
+        ^ "\tmov qword [rax + 1], rdi         ; CAR: current argument\n"
+        ^ "\tmov qword [rax + 1 + 8], rdx           ; CDR: current list\n"
+        ^ "\tmov rdx, rax                        ; Update rdx to point to the new pair\n"
+        ^ "\tmov rax, r8                         ; Restore closure to rax\n"        
+        ^ "\tdec r9\n"
+        ^ "\tdec r14 ; next iteration\n"
+        ^ (Printf.sprintf "\tjmp %s\n" make_lambda_opt_arg_list) 
 
-        ^ "\tdec rbx                              ; Decrement the counter\n"
-        ^ "\tcmp rbx, 0                           ; Check if rbx (counter) is zero\n"
-          ^ (Printf.sprintf "\tjne %s               ; If not zero, continue processing the next argument\n" label_loop_shrink)
-          
+        (* handle stack *)
+        ^ (Printf.sprintf "%s:\n" make_lambda_opt_stack_fixed)
+        ^ "\tmov r14, r15 ; \n"
+        ^ "\tmov r8, r15 ; num of iterations\n"
+        ^ "\tadd r8, 3\n"
+        ^ (Printf.sprintf "\tmov r10, %d\n" (List.length params'))
+        ^ "\tsub r14, r10\n"
+        ^ "\tsub r8, r14 ;\n"
+        ^ "\tmov qword [rsp + 8 * (r8 + 3)], rdx ; Add list to the right place\n"
+        ^ (Printf.sprintf "\tjmp %s\n" label_loop_shrink_more)
 
-        (* Finish creating the list *)
-        ^ "\t; Place the created list in the correct location on the stack\n"
-        ^ (Printf.sprintf "\tmov qword [rsp + 8 * (4 + %d)], rdx ; Store the list in the variadic parameter slot\n" (List.length params'))
-
-        (* Update the argument count *)
-        ^ "\t; Update the argument count to reflect the adjusted stack\n"
-        ^ (Printf.sprintf "\tmov r10, %d         ; Set r10 to the updated argument count (required params + 1)\n" ((List.length params') + 1))
-        ^ "\tmov qword [rsp + 8 * 3], r10        ; Update the argument count on the stack\n"
-
-        (* Jump to the next stage *)
-        ^ (Printf.sprintf "\tjmp %s               ; Continue to the next stage\n" label_stack_ok)
+        ^ (Printf.sprintf "%s:\n" label_loop_shrink_more)
+        ^ "\tcmp r8, 0\n"
+        ^ (Printf.sprintf "\tjle %s\n" make_lambda_opt_more_finish) 
+        ^ "\tlea r12, [r8 - 1]\n"
+        ^ "\tmov r11, qword [rsp + 8 * r12] \n"
+        ^ "\tlea r12, [r8 + r14 - 1]\n"
+        ^ "\tmov qword [rsp + 8 * r12], r11 \n"
+        ^ "\tdec r8 ; next iteration\n"
+        ^ (Printf.sprintf "\tjmp %s\n" label_loop_shrink_more) 
 
 
+        ^ (Printf.sprintf "%s:\n" make_lambda_opt_more_finish)
+        ^ "\tmov r8, r15 ; num of iterations\n"
+        ^ (Printf.sprintf "\tmov r10, %d\n" (List.length params'))
+        ^ "\tsub r8, r10 ; num of iterations\n"
+        ^ "\tinc r8\n"
+        ^ "\tadd rsp, [8 * r14] \n"
+        ^ "\tmov qword [rsp + 8 * 2], r8\n"
+        ^ (Printf.sprintf "\tjmp %s\n" label_stack_ok)
 
         (* end as mayer's *)
         ^ (Printf.sprintf "%s:\n" label_stack_ok)
@@ -2227,7 +2275,7 @@ module Code_Generation (* : CODE_GENERATION *) = struct
   let compile_scheme_string file_out user =
     let init = file_to_string "init.scm" in
     let source_code = init ^ "\n" ^ user in
-    let sexprs = (PC.star Reader.nt_sexpr source_code 0).found in
+    let sexprs = (PC.star Reader.nt_sexpr user 0).found in
     let exprs = List.map Tag_Parser.tag_parse sexprs in
     let exprs' = List.map Semantic_Analysis.semantics exprs in
     let asm_code = code_gen exprs' in

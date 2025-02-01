@@ -465,17 +465,17 @@ L_constants:
 	dq 6
 	db 0x72, 0x65, 0x74, 0x75, 0x72, 0x6E
 	; L_constants + 1501:
-	db T_integer	; 10
-	dq 10
+	db T_integer	; 5
+	dq 5
 	; L_constants + 1510:
-	db T_integer	; 20
-	dq 20
+	db T_integer	; 6
+	dq 6
 	; L_constants + 1519:
-	db T_integer	; 30
-	dq 30
+	db T_integer	; 7
+	dq 7
 	; L_constants + 1528:
-	db T_integer	; 40
-	dq 40
+	db T_integer	; 8
+	dq 8
 
 
 extern printf, fprintf, stdout, stderr, fwrite, exit, putchar, getchar
@@ -538,52 +538,85 @@ main:
 .L_lambda_opt_code_0001:
 	; Load number of arguments from stack into r10
 	mov r10, qword [rsp + 8 * 2]         ; Total number of arguments into r10
-	cmp r10, 2         ; Compare r10 (argument count) with required params
+	cmp r10, 3         ; Compare r10 (argument count) with required params
 	je .L_lambda_opt_arity_check_exact_0001	; Jump if arity matches
 	jg .L_lambda_opt_arity_check_more_0001	; Jump if more arguments passed
 	; If no match, jump to error
-	push qword [rsp + 8 * 2]	; Push actual argument count
-	push 2
 	jmp L_error_incorrect_arity_opt
 .L_lambda_opt_arity_check_exact_0001:
-	; Exact match case: Add an empty list for optional arguments
-	sub rsp, 8 * 1	; Allocate space for the empty list
-	mov qword [rsp], sob_nil	; Place the empty list on the stack
-	add qword [rsp + 8 * 2], 1	; Increment the argument count (n)
+	mov r14, r10 ; num of iterations
+	add r14, 3
+	mov r15, 0 ; index
+	sub rsp, 8 ; Allocate one extra space on the stack
+	mov qword [rsp], sob_nil ; Initialize the new space with sob_nil
+	jmp .L_lambda_opt_stack_shrink_loop_0001
+.L_lambda_opt_stack_shrink_loop_0001:
+	cmp r14, 0
+	jle .L_make_lambda_opt_exact_finish_0001
+	mov r11, qword [rsp + 8 * (r15 + 1)] 
+	mov qword [rsp + 8 * r15], r11 
+	dec r14 ; next iteration
+	inc r15 ; next iteration
+	jmp .L_lambda_opt_stack_shrink_loop_0001
+.L_make_lambda_opt_exact_finish_0001:
+	mov qword [rsp + 8 * r15], sob_nil ; Add sob_nil to the stack
+	inc r10
+	mov qword [rsp + 8 * 2], r10
 	jmp .L_lambda_opt_stack_adjusted_0001
 .L_lambda_opt_arity_check_more_0001:
-	; Handle extra arguments by creating a list and adjusting the stack
-	sub r10, 2         ; Calculate number of extra arguments
-	mov rbx, r10                         ; Save the number of extra arguments in rbx
-	lea rcx, [rsp + 8 * 4] ; rcx points to the first extra argument on the stack
-	mov rdx, sob_nil                     ; Initialize rdx to nil for building the list
-.L_lambda_opt_stack_shrink_loop_0001:
-	cmp rbx, 0                           ; Check if there are more arguments to process
-	je .L_lambda_opt_end_0001               ; If no more arguments, finish the list
-	mov rdi, qword [rcx]                 ; Load the current argument into rdi
-	add rcx, 8                          ; Move rcx to the next argument (lower on the stack)
-	mov r8, rax                         ; Save closure in r8
-	mov rdi, (1 + 8 + 8)                ; Allocate memory for the new pair (T_PAIR + CAR + CDR)
+	mov r14, r10 ; num of iterations
+	mov r15, r10 ; num of iterations
+	mov r9, 3
+	sub r14, r9 ; Calculate number of extra arguments
+	add r9, r14 ; all args
+	mov rdx, sob_nil ; Initialize the new space with sob_nil
+	jmp .L_make_lambda_opt_arg_list_0001
+.L_make_lambda_opt_arg_list_0001:
+	cmp r14, 0
+	jle .L_make_lambda_opt_stack_fixed_0001
+	mov rdi, qword [rsp + 8 * (r9 + 2)] ; Load the current argument into rdi
+	mov r8, rax                         ; Save closure pointer in r8
+	mov r10, (1 + 8 + 8)                ; Allocate memory for the new pair (T_PAIR + CAR + CDR)
 	call malloc                         ; Allocate memory, result in rax
 	mov byte [rax], T_pair              ; Mark as a pair
-	mov SOB_PAIR_CAR(rax), rdi          ; CAR: current argument
-	mov SOB_PAIR_CDR(rax), rdx          ; CDR: current list
-	mov rdx, rax                        ; Update rdx to point to the new list
-	mov rax, r8                         ; Restore closure from r8 to rax
-	dec rbx                              ; Decrement the counter
-	cmp rbx, 0                           ; Check if rbx (counter) is zero
-	jne .L_lambda_opt_stack_shrink_loop_0001               ; If not zero, continue processing the next argument
-	; Place the created list in the correct location on the stack
-	mov qword [rsp + 8 * (4 + 2)], rdx ; Store the list in the variadic parameter slot
-	; Update the argument count to reflect the adjusted stack
-	mov r10, 3         ; Set r10 to the updated argument count (required params + 1)
-	mov qword [rsp + 8 * 3], r10        ; Update the argument count on the stack
-	jmp .L_lambda_opt_stack_adjusted_0001               ; Continue to the next stage
+	mov qword [rax + 1], rdi         ; CAR: current argument
+	mov qword [rax + 1 + 8], rdx           ; CDR: current list
+	mov rdx, rax                        ; Update rdx to point to the new pair
+	mov rax, r8                         ; Restore closure to rax
+	dec r9
+	dec r14 ; next iteration
+	jmp .L_make_lambda_opt_arg_list_0001
+.L_make_lambda_opt_stack_fixed_0001:
+	mov r14, r15 ; 
+	mov r8, r15 ; num of iterations
+	add r8, 3
+	mov r10, 3
+	sub r14, r10
+	sub r8, r14 ;
+	mov qword [rsp + 8 * (r8 + 3)], rdx ; Add list to the right place
+	jmp .L_lambda_opt_stack_shrink_loop_more_0001
+.L_lambda_opt_stack_shrink_loop_more_0001:
+	cmp r8, 0
+	jle .L_make_lambda_opt_more_finish_0001
+	lea r12, [r8 - 1]
+	mov r11, qword [rsp + 8 * r12] 
+	lea r12, [r8 + r14 - 1]
+	mov qword [rsp + 8 * r12], r11 
+	dec r8 ; next iteration
+	jmp .L_lambda_opt_stack_shrink_loop_more_0001
+.L_make_lambda_opt_more_finish_0001:
+	mov r8, r15 ; num of iterations
+	mov r10, 3
+	sub r8, r10 ; num of iterations
+	inc r8
+	add rsp, [8 * r14] 
+	mov qword [rsp + 8 * 2], r8
+	jmp .L_lambda_opt_stack_adjusted_0001
 .L_lambda_opt_stack_adjusted_0001:
 	enter 0, 0
-	mov rax, PARAM(2)	; param c
+	mov rax, PARAM(3)	; param d
 	leave
-	ret AND_KILL_FRAME(2)
+	ret AND_KILL_FRAME(3)
 .L_lambda_opt_end_0001:	; new closure is in rax
 	cmp byte [rax], T_closure
 	jne L_error_non_closure
@@ -592,8 +625,7 @@ main:
 Lend:
 	mov rdi, rax
 	call print_sexpr_if_not_void
-
-        mov rdi, fmt_memory_usage
+mov rdi, fmt_memory_usage
         mov rsi, qword [top_of_memory]
         sub rsi, memory
         mov rax, 0
@@ -1477,37 +1509,7 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-    ;; Arguments:
-    ;; rdi = function to apply
-    ;; rsi = pointer to the list of arguments
-    
-    ;; 1. Save caller's registers
-    push rbp
-    mov rbp, rsp
-    push rbx
-
-    ;; 2. Unpack the argument list
-    mov rbx, rsi       ;; rbx points to the start of the argument list
-    mov rcx, 0         ;; rcx will count the number of arguments
-
-L_unpack_loop:
-    cmp rbx, 0         ;; Check if we reached the end of the list (NULL)
-    je L_call_function ;; If yes, jump to function call
-    push qword [rbx]   ;; Push the current argument onto the stack
-    mov rbx, [rbx+8]   ;; Move to the next argument in the list
-    inc rcx            ;; Increment the argument count
-    jmp L_unpack_loop  ;; Continue unpacking
-
-L_call_function:
-    ;; 3. Call the function
-    mov rdi, rcx       ;; First argument: number of arguments
-    call rdi           ;; Call the function
-
-    ;; 4. Restore caller's registers and return
-    pop rbx
-    mov rsp, rbp
-    pop rbp
-    ret
+;;; fill in for final project!
 
 L_code_ptr_is_null:
         enter 0, 0
