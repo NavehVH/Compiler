@@ -719,7 +719,7 @@ module Tag_Parser : TAG_PARSER = struct
 
   let scheme_list_of_ocaml_list = List.fold_right (fun a b -> ScmPair (a, b));;
 
-  (* #TODO Finish task 2 HERE *)
+  (* Finish task 2 HERE *)
   let rec tag_parse sexpr =
     match sexpr with
     | ScmVoid | ScmBoolean _ | ScmChar _ | ScmString _ | ScmNumber _ ->
@@ -793,7 +793,7 @@ module Tag_Parser : TAG_PARSER = struct
          else raise (X_syntax "duplicate function parameters")
        | _ -> raise (X_syntax "invalid parameter list"))
 
-    (* add support for let (ADDED) *)
+    (* add support for let (ADDED) #TODO CHANGE THIS *)
     | ScmPair (ScmSymbol "let", ScmPair (ribs, exprs)) ->
       let (names, values) = names_values ribs in
       let params = scheme_list_of_ocaml_list names ScmNil in
@@ -817,23 +817,65 @@ module Tag_Parser : TAG_PARSER = struct
     (* add support for letrec (ADDED) *)
 
     | ScmPair (ScmSymbol "letrec", ScmPair (bindings, body)) ->
-      let rec macro_expand_letrec bindings body =
-        let rec extract_bindings bindings =
-          match bindings with
-          | ScmNil -> (ScmNil, ScmNil)
-          | ScmPair (ScmPair (name, ScmPair (value, ScmNil)), rest) ->
-            let (names, sets) = extract_bindings rest in
-            (ScmPair (ScmPair (name, ScmPair (ScmSymbol "whatever'", ScmNil)), names),
-             ScmPair (ScmPair (ScmSymbol "set!", ScmPair (name, ScmPair (value, ScmNil))), sets))
-          | _ -> raise (X_syntax "Invalid letrec syntax") in
-        let (names, sets) = extract_bindings bindings in
-        ScmPair (ScmSymbol "let",
-                 ScmPair (names, ScmPair (ScmPair (ScmSymbol "begin", ScmPair (sets, body)), ScmNil))) in
-      tag_parse (macro_expand_letrec bindings body)
-
-
-
-
+      let rec expand_letrec bindings body =
+        match bindings with
+        | [ScmPair (ScmSymbol var, expr)] ->
+            ScmPair (
+              ScmSymbol "let",
+              ScmPair (
+                ScmPair (
+                  ScmPair (
+                    ScmSymbol var,
+                    ScmPair (
+                      ScmSymbol "quote",
+                      ScmPair (ScmSymbol "whatever", ScmNil)
+                    )
+                  ),
+                  ScmNil
+                ),
+                ScmPair (
+                  ScmPair (
+                    ScmSymbol "set!",
+                    ScmPair (ScmSymbol var, ScmPair (expr, ScmNil))
+                  ),
+                  body
+                )
+              )
+            )
+        | ScmPair (ScmSymbol var, expr) :: rest ->
+            let rest_expansion = expand_letrec rest body in
+            ScmPair (
+              ScmSymbol "let",
+              ScmPair (
+                ScmPair (
+                  ScmPair (
+                    ScmSymbol var,
+                    ScmPair (
+                      ScmSymbol "quote",
+                      ScmPair (ScmSymbol "whatever", ScmNil)
+                    )
+                  ),
+                  ScmNil
+                ),
+                ScmPair (
+                  ScmPair (
+                    ScmSymbol "set!",
+                    ScmPair (ScmSymbol var, ScmPair (expr, ScmNil))
+                  ),
+                  ScmPair (rest_expansion, ScmNil)
+                )
+              )
+            )
+        | _ -> raise (X_syntax "Malformed letrec bindings")
+      in
+      let bindings = scheme_list_to_ocaml bindings in
+      let bindings = match bindings with
+        | bindings, ScmNil -> bindings
+        | _ -> raise (X_syntax "Malformed letrec bindings")
+      in
+      let expanded_letrec = expand_letrec bindings body in
+      tag_parse expanded_letrec
+  
     | ScmPair (ScmSymbol "and", ScmNil) -> tag_parse (ScmBoolean true)
     | ScmPair (ScmSymbol "and", exprs) ->
       (match (scheme_list_to_ocaml exprs) with
@@ -1857,7 +1899,7 @@ module Code_Generation (* : CODE_GENERATION *) = struct
     make_make_label ".L_make_lambda_opt_exact_finish";;
   let make_lambda_opt_more_finish = (* added *)
     make_make_label ".L_make_lambda_opt_more_finish";;
-    let make_lambda_opt_stack_fixed = (* added *)
+  let make_lambda_opt_stack_fixed = (* added *)
     make_make_label ".L_make_lambda_opt_stack_fixed";;
 
 
@@ -1910,7 +1952,7 @@ module Code_Generation (* : CODE_GENERATION *) = struct
                   let expr_code = run params env expr' in
                   if i < List.length exprs' - 1 then
                     expr_code ^
-                    "\tcmp rax, sob_false\n" ^
+                    "\tcmp rax, sob_boolean_false\n" ^
                     Printf.sprintf "\tjne %s\n" label_exit
                   else
                     expr_code)
@@ -2203,52 +2245,48 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         ^ "\tpush SOB_CLOSURE_ENV(rax)\n"
         ^ "\tcall SOB_CLOSURE_CODE(rax)\n"
       | ScmApplic' (proc, args, Tail_Call) ->
-        (* Generate code to evaluate each argument in reverse order and push it onto the stack. *)
-        let arguments_code =
-          String.concat ""
-            (List.map
-               (fun arg ->
-                  let evaluated_arg = run params env arg in
-                  evaluated_arg ^ "\tpush rax\n")
-               (List.rev args)) in
-
-        (* Generate code to evaluate the procedure and place its result in the rax register. *)
-        let procedure_code = run params env proc in
-
-        (* Create labels for the start and end of the frame recycling loop. *)
-        let loop_start_label = make_tc_applic_recycle_frame_loop () in
-        let loop_end_label = make_tc_applic_recycle_frame_done () in
-
-        (* Combine the procedure code, argument code, and initial setup for the tail call. *)
-        procedure_code
-        ^ arguments_code
-        ^ (Printf.sprintf "\tpush %d\n" (List.length args)) (* Push the argument count. *)
-        ^ "\tcmp byte [rax], T_closure\n" 
-        ^ "\tjne L_error_non_closure\n" 
-        ^ "\tpush SOB_CLOSURE_ENV(rax)\n" 
-
-        (* Set up pointers for recycling the current frame. *)
-        ^ "\tlea r11, [rbp - 8]\n" 
-        ^ "\tmov r8, rbp\n" 
-        ^ (Printf.sprintf "\tmov r9, %d + 4\n" (List.length args)) 
-        ^ "\tlea r10, [rsp - 8 * r9]\n" 
-
-        (* Copy the old frame into the new frame slot by slot. *)
-        ^ (Printf.sprintf "%s:\n" loop_start_label) 
-        ^ "\tcmp r9, 0\n" 
-        ^ (Printf.sprintf "\tje %s\n" loop_end_label) 
-        ^ "\tmov rdx, qword [r11]\n" 
-        ^ "\tmov qword [r10], rdx\n" 
-        ^ "\tsub r11, 8\n" 
-        ^ "\tadd r10, 8\n" 
-        ^ "\tdec r9\n" 
-        ^ (Printf.sprintf "\tjmp %s\n" loop_start_label) 
-
-        (* Adjust the stack and frame pointers and transfer control to the procedure. *)
-        ^ (Printf.sprintf "%s:\n" loop_end_label) 
-        ^ "\tpop rbp\n" 
-        ^ "\tlea rsp, [r10 - 8]\n" 
+        let generate_args_code =
+          List.fold_right
+            (fun arg acc ->
+               let compiled_arg = run params env arg in
+               compiled_arg ^ "\tpush rax\n" ^ acc)
+            args
+            ""
+        and compiled_proc_code = run params env proc
+        and loop_start_label = make_tc_applic_recycle_frame_loop ()
+        and loop_end_label = make_tc_applic_recycle_frame_done ()
+        in
+        "\t; Setting up for a tail-call\n"
+        ^ generate_args_code
+        ^ (Printf.sprintf "\tpush %d\n" (List.length args))
+        ^ compiled_proc_code
+        ^ "\tcmp byte [rax], T_closure\n"
+        ^ "\tjne L_error_non_closure\n"
+        ^ "\tpush SOB_CLOSURE_ENV(rax)\n"
+        ^ "\tmov r8, qword [rbp + 8 * 1]\n"
+        ^ "\tmov r9, qword [rbp]\n"
+        ^ "\tpush r8\n"
+        ^ "\tpush r9\n"
+        ^ (Printf.sprintf "\tmov r10, %d + 4\n" (List.length args))
+        ^ "\tmov r11, COUNT\n"
+        ^ "\tlea r11, [rbp + 8 * r11 + 24]\n"
+        ^ "\tlea r12, [rbp - 8]\n"
+        ^ (Printf.sprintf "%s:\n" loop_start_label)
+        ^ "\tcmp r10, 0\n"
+        ^ (Printf.sprintf "\tje %s\n" loop_end_label)
+        ^ "\tmov r13, qword [r12]\n"
+        ^ "\tmov qword [r11], r13\n"
+        ^ "\tdec r10\n"
+        ^ "\tsub r11, 8\n"
+        ^ "\tsub r12, 8\n"
+        ^ (Printf.sprintf "\tjmp %s\n" loop_start_label)
+        ^ (Printf.sprintf "%s:\n" loop_end_label)
+        ^ "\tlea rsp, [r11 + 8]\n"
+        ^ "\tpop rbp\n"
         ^ "\tjmp SOB_CLOSURE_CODE(rax)\n"
+
+
+
 
     and runs params env exprs' =
       List.map (fun expr' -> run params env expr') exprs' in
@@ -2286,7 +2324,7 @@ module Code_Generation (* : CODE_GENERATION *) = struct
   let compile_and_run_scheme_string file_out_base user =
     let init = file_to_string "init.scm" in
     let source_code = init ^ "\n" ^ user in
-    let sexprs = (PC.star Reader.nt_sexpr user 0).found in
+    let sexprs = (PC.star Reader.nt_sexpr source_code 0).found in
     let exprs = List.map Tag_Parser.tag_parse sexprs in
     let exprs' = List.map Semantic_Analysis.semantics exprs in
     let asm_code = code_gen exprs' in
