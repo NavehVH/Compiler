@@ -2085,19 +2085,17 @@ module Code_Generation (* : CODE_GENERATION *) = struct
 
         (* Adding Arity Comparison Logic *)
         ^ (Printf.sprintf "%s:\n" label_code)
-        ^ "\t; Load number of arguments from stack into r10\n"
-        ^ "\tmov r10, qword [rsp + 8 * 2]         ; Total number of arguments into r10\n"
+        ^ "\tmov r10, qword [rsp + 8 * 2]         ; r10 = number of args \n"
         ^ (Printf.sprintf "\tcmp r10, %d         ; Compare r10 (argument count) with required params\n" (List.length params'))
         ^ (Printf.sprintf "\tje %s\t; Jump if arity matches\n" label_arity_exact)
         ^ (Printf.sprintf "\tjg %s\t; Jump if more arguments passed\n" label_arity_more)
-        ^ "\t; If no match, jump to error\n"
         ^ "\tjmp L_error_incorrect_arity_opt\n"
 
         (* Handle exact *)
         ^ (Printf.sprintf "%s:\n" label_arity_exact)
-        ^ "\tmov r14, r10 ; num of iterations\n"
-        ^ "\tadd r14, 3\n"
-        ^ "\tmov r15, 0 ; index\n"
+        ^ "\tmov r14, r10 ; r14 = num of iterations (args)\n"
+        ^ "\tadd r14, 3 ; add 3 first stack values\n"
+        ^ "\tmov r15, 0 ; r15 = index\n"
 
         ^ "\tsub rsp, 8 ; Allocate one extra space on the stack\n"
         ^ "\tmov qword [rsp], sob_nil ; Initialize the new space with sob_nil\n"
@@ -2106,14 +2104,14 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         ^ (Printf.sprintf "%s:\n" label_loop_shrink)
         ^ "\tcmp r14, 0\n"
         ^ (Printf.sprintf "\tjle %s\n" make_lambda_opt_exact_finish) 
-        ^ "\tmov r11, qword [rsp + 8 * (r15 + 1)] \n"
-        ^ "\tmov qword [rsp + 8 * r15], r11 \n"
-        ^ "\tdec r14 ; next iteration\n"
-        ^ "\tinc r15 ; next iteration\n"
+        ^ "\tmov r11, qword [rsp + 8 * (r15 + 1)] ; r11 = value of param\n"
+        ^ "\tmov qword [rsp + 8 * r15], r11 ; move param to the right place\n"
+        ^ "\tdec r14 ; next loop value\n"
+        ^ "\tinc r15 ; update i\n"
         ^ (Printf.sprintf "\tjmp %s\n" label_loop_shrink) 
 
         ^ (Printf.sprintf "%s:\n" make_lambda_opt_exact_finish)
-        ^ "\tmov qword [rsp + 8 * r15], sob_nil ; Add sob_nil to the stack\n"
+        ^ "\tmov qword [rsp + 8 * r15], sob_nil ; Add sob_nil to the stack at the end\n"
         ^ "\tinc r10\n"
         ^ "\tmov qword [rsp + 8 * 2], r10\n"
 
@@ -2122,59 +2120,59 @@ module Code_Generation (* : CODE_GENERATION *) = struct
 
         (* Handle more *)
         ^ (Printf.sprintf "%s:\n" label_arity_more)
-        ^ "\tmov r14, r10 ; num of iterations\n"
-        ^ "\tmov r15, r10 ; num of iterations\n"
-        ^ (Printf.sprintf "\tmov r9, %d\n" (List.length params'))
-        ^ "\tsub r14, r9 ; Calculate number of extra arguments\n"
-        ^ "\tadd r9, r14 ; all args\n"
-        ^ "\tmov rdx, sob_nil ; Initialize the new space with sob_nil\n"
+        ^ "\tmov r14, r10 ; r14 = num args\n" 
+        ^ "\tmov r15, r10 ; r15 = num args\n" 
+        ^ (Printf.sprintf "\tmov r9, %d; r9 = number of params \n" (List.length params')) 
+        ^ "\tsub r14, r9 ; r14 = extra args\n" 
+        ^ "\tadd r9, r14 ; r9 = num args\n" 
+        ^ "\tmov rdx, sob_nil ; rdx = point to our list\n"
         ^ (Printf.sprintf "\tjmp %s\n" make_lambda_opt_arg_list)
 
         ^ (Printf.sprintf "%s:\n" make_lambda_opt_arg_list)
         ^ "\tcmp r14, 0\n"
         ^ (Printf.sprintf "\tjle %s\n" make_lambda_opt_stack_fixed) 
-        ^ "\tmov rdi, qword [rsp + 8 * (r9 + 2)] ; Load the current argument into rdi\n"
-        ^ "\tmov r8, rax                         ; Save closure pointer in r8\n"
-        ^ "\tmov r10, (1 + 8 + 8)                ; Allocate memory for the new pair (T_PAIR + CAR + CDR)\n"
+        ^ "\tmov rdi, qword [rsp + 8 * (r9 + 2)] ; rdi = Load the last arg\n"
+        ^ "\tmov r8, rax                         ; r8= temp closure of rax \n"
+        ^ "\tmov r10, (1 + 8 + 8)                ; r10 = Allocate memory for the new pair (T_PAIR + CAR + CDR)\n"
         ^ "\tcall malloc                         ; Allocate memory, result in rax\n"
         ^ "\tmov byte [rax], T_pair              ; Mark as a pair\n"
         ^ "\tmov qword [rax + 1], rdi         ; CAR: current argument\n"
         ^ "\tmov qword [rax + 1 + 8], rdx           ; CDR: current list\n"
-        ^ "\tmov rdx, rax                        ; Update rdx to point to the new pair\n"
+        ^ "\tmov rdx, rax                        ; rdx = Update rdx to point to the new pair\n"
         ^ "\tmov rax, r8                         ; Restore closure to rax\n"        
-        ^ "\tdec r9\n"
-        ^ "\tdec r14 ; next iteration\n"
+        ^ "\tdec r9                              ; args index minus 1\n"
+        ^ "\tdec r14                             ; next iteration\n"
         ^ (Printf.sprintf "\tjmp %s\n" make_lambda_opt_arg_list) 
 
-        (* handle stack *)
+        (* handle stack *) 
         ^ (Printf.sprintf "%s:\n" make_lambda_opt_stack_fixed)
-        ^ "\tmov r14, r15 ; \n"
-        ^ "\tmov r8, r15 ; num of iterations\n"
-        ^ "\tadd r8, 3\n"
-        ^ (Printf.sprintf "\tmov r10, %d\n" (List.length params'))
-        ^ "\tsub r14, r10\n"
-        ^ "\tsub r8, r14 ;\n"
-        ^ "\tmov qword [rsp + 8 * (r8 + 3)], rdx ; Add list to the right place\n"
+        ^ "\tmov r14, r15 ; r14 = num args\n"
+        ^ "\tmov r8, r15 ; r14 = num args and num of iterations \n"
+        ^ "\tadd r8, 3 ; add the first 3 things in the stuff to num of iterations\n"
+        ^ (Printf.sprintf "\tmov r10, %d; r10 = num of params\n" (List.length params')) 
+        ^ "\tsub r14, r10 ; r14 = extra args\n" 
+        ^ "\tsub r8, r14 ; r8 = number of iterations (check this)\n"
+        ^ "\tdec r14 ; how much we need to change stack wise?\n"
+        ^ "\tmov qword [rsp + 8 * (r8 + 2)], rdx ; Add list to the right place\n"
         ^ (Printf.sprintf "\tjmp %s\n" label_loop_shrink_more)
 
         ^ (Printf.sprintf "%s:\n" label_loop_shrink_more)
         ^ "\tcmp r8, 0\n"
         ^ (Printf.sprintf "\tjle %s\n" make_lambda_opt_more_finish) 
-        ^ "\tlea r12, [r8 - 1]\n"
+        ^ "\tlea r12, [r8 - 1]; r12 = position of the arg we need to move\n"
         ^ "\tmov r11, qword [rsp + 8 * r12] \n"
-        ^ "\tlea r12, [r8 + r14 - 1]\n"
-        ^ "\tmov qword [rsp + 8 * r12], r11 \n"
+        ^ "\tlea r12, [r14]\n"
+        ^ "\tmov qword [rsp + 8 * (r8 + 1)], r11 \n"
         ^ "\tdec r8 ; next iteration\n"
         ^ (Printf.sprintf "\tjmp %s\n" label_loop_shrink_more) 
 
-
         ^ (Printf.sprintf "%s:\n" make_lambda_opt_more_finish)
-        ^ "\tmov r8, r15 ; num of iterations\n"
+        ^ "\tmov r8, r15 ; num of args\n"
         ^ (Printf.sprintf "\tmov r10, %d\n" (List.length params'))
-        ^ "\tsub r8, r10 ; num of iterations\n"
+        ^ "\tsub r8, r10 ; num of new args\n"
         ^ "\tinc r8\n"
-        ^ "\tadd rsp, [8 * r14] \n"
-        ^ "\tmov qword [rsp + 8 * 2], r8\n"
+        ^ "\tmov qword [rsp + 8 * 4], r8\n"
+        ^ "\tadd rsp, 8 * 2  ; \n"
         ^ (Printf.sprintf "\tjmp %s\n" label_stack_ok)
 
         (* end as mayer's *)

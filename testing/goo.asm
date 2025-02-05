@@ -465,15 +465,24 @@ L_constants:
 	dq 6
 	db 0x72, 0x65, 0x74, 0x75, 0x72, 0x6E
 	; L_constants + 1501:
+	db T_integer	; 1
+	dq 1
+	; L_constants + 1510:
+	db T_integer	; 2
+	dq 2
+	; L_constants + 1519:
+	db T_integer	; 3
+	dq 3
+	; L_constants + 1528:
+	db T_integer	; 4
+	dq 4
+	; L_constants + 1537:
 	db T_integer	; 5
 	dq 5
-	; L_constants + 1510:
+	; L_constants + 1546:
 	db T_integer	; 6
 	dq 6
-	; L_constants + 1519:
-	db T_integer	; 7
-	dq 7
-	; L_constants + 1528:
+	; L_constants + 1555:
 	db T_integer	; 8
 	dq 8
 
@@ -489,15 +498,25 @@ main:
         enter 0, 0
 
 	; preparing a non-tail-call
+	mov rax, L_constants + 1555
+	push rax
+	mov rax, L_constants + 1546
+	push rax
+	mov rax, L_constants + 1537
+	push rax
 	mov rax, L_constants + 1528
 	push rax
 	mov rax, L_constants + 1519
 	push rax
 	mov rax, L_constants + 1510
 	push rax
+	mov rax, L_constants + 1510
+	push rax
 	mov rax, L_constants + 1501
 	push rax
-	push 4	; arg count
+	mov rax, L_constants + 1501
+	push rax
+	push 9	; arg count
 	mov rdi, (1 + 8 + 8)	; sob closure
 	call malloc
 	push rax
@@ -509,115 +528,114 @@ main:
 	mov rdi, ENV
 	mov rsi, 0
 	mov rdx, 1
-.L_lambda_opt_env_loop_0001:	; ext_env[i + 1] <-- env[i]
+.L_lambda_opt_env_loop_000b:	; ext_env[i + 1] <-- env[i]
 	cmp rsi, 0
-	je .L_lambda_opt_env_end_0001
+	je .L_lambda_opt_env_end_000b
 	mov rcx, qword [rdi + 8 * rsi]
 	mov qword [rax + 8 * rdx], rcx
 	inc rsi
 	inc rdx
-	jmp .L_lambda_opt_env_loop_0001
-.L_lambda_opt_env_end_0001:
+	jmp .L_lambda_opt_env_loop_000b
+.L_lambda_opt_env_end_000b:
 	pop rbx
 	mov rsi, 0
-.L_lambda_opt_params_loop_0001:	; copy params
+.L_lambda_opt_params_loop_000b:	; copy params
 	cmp rsi, 0
-	je .L_lambda_opt_params_end_0001
+	je .L_lambda_opt_params_end_000b
 	mov rdx, qword [rbp + 8 * rsi + 8 * 4]
 	mov qword [rbx + 8 * rsi], rdx
 	inc rsi
-	jmp .L_lambda_opt_params_loop_0001
-.L_lambda_opt_params_end_0001:
+	jmp .L_lambda_opt_params_loop_000b
+.L_lambda_opt_params_end_000b:
 	mov qword [rax], rbx	; ext_env[0] <-- new_rib 
 	mov rbx, rax
 	pop rax
 	mov byte [rax], T_closure
 	mov SOB_CLOSURE_ENV(rax), rbx
-	mov SOB_CLOSURE_CODE(rax), .L_lambda_opt_code_0001
-	jmp .L_lambda_opt_end_0001
-.L_lambda_opt_code_0001:
-	; Load number of arguments from stack into r10
-	mov r10, qword [rsp + 8 * 2]         ; Total number of arguments into r10
-	cmp r10, 3         ; Compare r10 (argument count) with required params
-	je .L_lambda_opt_arity_check_exact_0001	; Jump if arity matches
-	jg .L_lambda_opt_arity_check_more_0001	; Jump if more arguments passed
-	; If no match, jump to error
+	mov SOB_CLOSURE_CODE(rax), .L_lambda_opt_code_000b
+	jmp .L_lambda_opt_end_000b
+.L_lambda_opt_code_000b:
+	mov r10, qword [rsp + 8 * 2]         ; r10 = number of args 
+	cmp r10, 1         ; Compare r10 (argument count) with required params
+	je .L_lambda_opt_arity_check_exact_000b	; Jump if arity matches
+	jg .L_lambda_opt_arity_check_more_000b	; Jump if more arguments passed
 	jmp L_error_incorrect_arity_opt
-.L_lambda_opt_arity_check_exact_0001:
-	mov r14, r10 ; num of iterations
-	add r14, 3
-	mov r15, 0 ; index
+.L_lambda_opt_arity_check_exact_000b:
+	mov r14, r10 ; r14 = num of iterations (args)
+	add r14, 3 ; add 3 first stack values
+	mov r15, 0 ; r15 = index
 	sub rsp, 8 ; Allocate one extra space on the stack
 	mov qword [rsp], sob_nil ; Initialize the new space with sob_nil
-	jmp .L_lambda_opt_stack_shrink_loop_0001
-.L_lambda_opt_stack_shrink_loop_0001:
+	jmp .L_lambda_opt_stack_shrink_loop_000b
+.L_lambda_opt_stack_shrink_loop_000b:
 	cmp r14, 0
-	jle .L_make_lambda_opt_exact_finish_0001
-	mov r11, qword [rsp + 8 * (r15 + 1)] 
-	mov qword [rsp + 8 * r15], r11 
-	dec r14 ; next iteration
-	inc r15 ; next iteration
-	jmp .L_lambda_opt_stack_shrink_loop_0001
-.L_make_lambda_opt_exact_finish_0001:
-	mov qword [rsp + 8 * r15], sob_nil ; Add sob_nil to the stack
+	jle .L_make_lambda_opt_exact_finish_000b
+	mov r11, qword [rsp + 8 * (r15 + 1)] ; r11 = value of param
+	mov qword [rsp + 8 * r15], r11 ; move param to the right place
+	dec r14 ; next loop value
+	inc r15 ; update i
+	jmp .L_lambda_opt_stack_shrink_loop_000b
+.L_make_lambda_opt_exact_finish_000b:
+	mov qword [rsp + 8 * r15], sob_nil ; Add sob_nil to the stack at the end
 	inc r10
 	mov qword [rsp + 8 * 2], r10
-	jmp .L_lambda_opt_stack_adjusted_0001
-.L_lambda_opt_arity_check_more_0001:
-	mov r14, r10 ; num of iterations
-	mov r15, r10 ; num of iterations
-	mov r9, 3
-	sub r14, r9 ; Calculate number of extra arguments
-	add r9, r14 ; all args
-	mov rdx, sob_nil ; Initialize the new space with sob_nil
-	jmp .L_make_lambda_opt_arg_list_0001
-.L_make_lambda_opt_arg_list_0001:
+	jmp .L_lambda_opt_stack_adjusted_000b
+.L_lambda_opt_arity_check_more_000b:
+	mov r14, r10 ; r14 = num args
+	mov r15, r10 ; r15 = num args
+	mov r9, 1; r9 = number of params 
+	sub r14, r9 ; r14 = extra args
+	add r9, r14 ; r9 = num args
+	mov rdx, sob_nil ; rdx = point to our list
+	jmp .L_make_lambda_opt_arg_list_000b
+.L_make_lambda_opt_arg_list_000b:
 	cmp r14, 0
-	jle .L_make_lambda_opt_stack_fixed_0001
-	mov rdi, qword [rsp + 8 * (r9 + 2)] ; Load the current argument into rdi
-	mov r8, rax                         ; Save closure pointer in r8
-	mov r10, (1 + 8 + 8)                ; Allocate memory for the new pair (T_PAIR + CAR + CDR)
+	jle .L_make_lambda_opt_stack_fixed_000b
+	mov rdi, qword [rsp + 8 * (r9 + 2)] ; rdi = Load the last arg
+	mov r8, rax                         ; r8= temp closure of rax 
+	mov r10, (1 + 8 + 8)                ; r10 = Allocate memory for the new pair (T_PAIR + CAR + CDR)
 	call malloc                         ; Allocate memory, result in rax
 	mov byte [rax], T_pair              ; Mark as a pair
 	mov qword [rax + 1], rdi         ; CAR: current argument
 	mov qword [rax + 1 + 8], rdx           ; CDR: current list
-	mov rdx, rax                        ; Update rdx to point to the new pair
+	mov rdx, rax                        ; rdx = Update rdx to point to the new pair
 	mov rax, r8                         ; Restore closure to rax
-	dec r9
-	dec r14 ; next iteration
-	jmp .L_make_lambda_opt_arg_list_0001
-.L_make_lambda_opt_stack_fixed_0001:
-	mov r14, r15 ; 
-	mov r8, r15 ; num of iterations
-	add r8, 3
-	mov r10, 3
-	sub r14, r10
-	sub r8, r14 ;
-	mov qword [rsp + 8 * (r8 + 3)], rdx ; Add list to the right place
-	jmp .L_lambda_opt_stack_shrink_loop_more_0001
-.L_lambda_opt_stack_shrink_loop_more_0001:
+	dec r9                              ; args index minus 1
+	dec r14                             ; next iteration
+	jmp .L_make_lambda_opt_arg_list_000b
+.L_make_lambda_opt_stack_fixed_000b:
+	mov r14, r15 ; r14 = num args
+	mov r8, r15 ; r14 = num args and num of iterations 
+	add r8, 3 ; add the first 3 things in the stuff to num of iterations
+	mov r10, 1; r10 = num of params
+	sub r14, r10 ; r14 = extra args
+	sub r8, r14 ; r8 = number of iterations (check this)
+	dec r14 ; how much we need to change stack wise?
+	mov qword [rsp + 8 * (r8 + 2)], rdx ; Add list to the right place
+	jmp .L_lambda_opt_stack_shrink_loop_more_000b
+.L_lambda_opt_stack_shrink_loop_more_000b:
 	cmp r8, 0
-	jle .L_make_lambda_opt_more_finish_0001
-	lea r12, [r8 - 1]
+	jle .L_make_lambda_opt_more_finish_000b
+	lea r12, [r8 - 1]; r12 = position of the arg we need to move
 	mov r11, qword [rsp + 8 * r12] 
-	lea r12, [r8 + r14 - 1]
-	mov qword [rsp + 8 * r12], r11 
+	lea r12, [r14]
+	mov qword [rsp + 8 * (r8 + 1)], r11 
 	dec r8 ; next iteration
-	jmp .L_lambda_opt_stack_shrink_loop_more_0001
-.L_make_lambda_opt_more_finish_0001:
-	mov r8, r15 ; num of iterations
-	mov r10, 3
-	sub r8, r10 ; num of iterations
+	jmp .L_lambda_opt_stack_shrink_loop_more_000b
+.L_make_lambda_opt_more_finish_000b:
+	mov r8, r15 ; num of args
+	mov r10, 1
+	sub r8, r10 ; num of new args
 	inc r8
-	add rsp, [8 * r14] 
-	mov qword [rsp + 8 * 2], r8
-	jmp .L_lambda_opt_stack_adjusted_0001
-.L_lambda_opt_stack_adjusted_0001:
+	mov qword [rsp + 8 * 4], r8
+	add rsp, 8 * 2  ; 
+	jmp .L_lambda_opt_stack_adjusted_000b
+.L_lambda_opt_stack_adjusted_000b:
 	enter 0, 0
-	mov rax, PARAM(3)	; param d
+	mov rax, PARAM(1)	; param d
 	leave
-	ret AND_KILL_FRAME(3)
-.L_lambda_opt_end_0001:	; new closure is in rax
+	ret AND_KILL_FRAME(1)
+.L_lambda_opt_end_000b:	; new closure is in rax
 	cmp byte [rax], T_closure
 	jne L_error_non_closure
 	push SOB_CLOSURE_ENV(rax)
