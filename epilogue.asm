@@ -891,7 +891,7 @@ L_code_ptr_bin_apply:
 
 ; --- Flatten the argument list: for each element, push its value onto the stack.
 flatten_loop:
-        cmp     rcx, SOB_NIL         ; if rcx == nil, list is exhausted
+        cmp     rcx, sob_nil         ; if rcx == nil, list is exhausted
         je      flatten_done
         ; Optionally: assert that rcx is a pair.
         mov     rax, SOB_PAIR_CAR(rcx) ; get the car of the list cell
@@ -907,7 +907,7 @@ flatten_done:
         ; it cleans up the argument block from the stack before returning.)
         leave                      ; tear down the current frame
         ret AND_KILL_FRAME(2)      ; clean up the 2 parameters of apply
-        
+
 L_code_ptr_is_null:
         enter 0, 0
         cmp COUNT, 1
