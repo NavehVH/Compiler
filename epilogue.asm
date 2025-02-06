@@ -902,7 +902,7 @@ L_code_ptr_bin_apply:
         xor   r11, r11              ; r11 = m = 0
         mov   rcx, r9               ; rcx points to spliced list
 apply_length_loop:
-        cmp   rcx, sob_nil          ; have we reached the end?
+        cmp   rcx, SOB_nil          ; reached end?
         je    apply_length_done
         cmp   byte [rcx], T_pair    ; verify that this is a pair
         jne   L_apply_error_improper_list
@@ -915,45 +915,52 @@ apply_length_done:
         add   r12, r11             ; r12 = T
 
         ; -- Allocate new argument frame: reserve T*8 bytes on the stack --
+        ;     (Assuming that the new frame will start with a count word.)
         mov   rax, r12
         imul  rax, 8
-        sub   rsp, rax             ; new frame spans [rsp, rsp+(T*8)]
+        sub   rsp, rax             ; new frame spans [rsp, rsp + (T*8)]
 
         ; -- Copy explicit arguments into the new frame --
+        ;     (They will be stored starting at offset 8; slot 0 holds COUNT.)
         xor   rsi, rsi             ; rsi = loop counter = 0
 copy_explicit:
         cmp   rsi, r8              ; while (rsi < n)
         jge   copy_explicit_done
-        mov   rdi, PARAM(rsi+1)    ; load explicit argument (PARAM(1) ... PARAM(n))
+        mov   rdi, PARAM(rsi+1)    ; load explicit argument (PARAM(1)...PARAM(n))
         mov   rcx, rsp
-        mov   [rcx + rsi*8], rdi   ; store at new frame offset (rsi*8)
+        mov   [rcx + 8 + rsi*8], rdi   ; store at new frame slot (rsi+1)
         inc   rsi
         jmp   copy_explicit
 copy_explicit_done:
 
         ; -- Flatten the spliced list into the new frame --
-        ; rsi now equals n (the next free slot)
+        ;     (We continue storing arguments after the explicit ones.)
+        ;     rsi now equals n, so the next free slot is at offset 8 + n*8.
         mov   rdx, r9             ; rdx will traverse the spliced list
 flatten_loop:
-        cmp   rdx, sob_nil
+        cmp   rdx, SOB_nil
         je    flatten_done
         cmp   byte [rdx], T_pair
         jne   L_apply_error_improper_list
         mov   rdi, SOB_PAIR_CAR(rdx)  ; get current element of the list
         mov   rcx, rsp
-        mov   [rcx + rsi*8], rdi      ; store into new frame at offset (rsi*8)
+        mov   [rcx + 8 + rsi*8], rdi  ; store into new frame at slot (rsi+1)
         inc   rsi                   ; next free slot
         mov   rdx, SOB_PAIR_CDR(rdx) ; move to next cons cell
         jmp   flatten_loop
 flatten_done:
 
+        ; -- Now store the new argument count into the frame header --
+        ;     We assume that the count is stored at offset 0.
+        mov   qword [rsp], r12
+
         ; -- Tail–call the closure --
-        ; Extract the closure’s code pointer
+        ;     Extract the closure’s code pointer.
         mov   rbx, SOB_CLOSURE_CODE(rbx)
-        ; (Optional: restore caller’s rbp for frame recycling)
-        mov   rax, [rbp]
-        mov   rbp, rax
-        ; Tail–jump to the closure’s code pointer
+        ;     Recycle the current frame by restoring the caller’s rbp.
+        mov   rax, [rbp]            ; load saved old rbp
+        mov   rbp, rax              ; restore caller’s rbp
+        ;     Tail–jump to the closure’s code pointer.
         jmp   rbx
 
 ;------------------------------------------------------------
@@ -961,7 +968,7 @@ flatten_done:
 ;------------------------------------------------------------
 L_apply_error_arg_count_2:
         mov   rdi, qword [stderr]
-        mov   rsi, fmt_arg_count_2   ; your runtime’s format string
+        mov   rsi, fmt_arg_count_2   ; use your runtime’s format string
         mov   rdx, COUNT
         mov   rax, 0
         ENTER
@@ -972,7 +979,7 @@ L_apply_error_arg_count_2:
 
 L_apply_error_improper_list:
         mov   rdi, qword [stderr]
-        mov   rsi, fmt_error_improper_list  ; your runtime’s format string
+        mov   rsi, fmt_error_improper_list  ; use your runtime’s format string
         mov   rax, 0
         ENTER
         call  fprintf
