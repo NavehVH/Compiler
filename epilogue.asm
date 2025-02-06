@@ -882,111 +882,87 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-    enter 0,0
+    enter 0, 0                        ; set up a new frame
 
-    ; --- Load original argument count from caller's frame ---
-    mov rax, [rbp+16]        ; original count
-    cmp rax, 2
-    jb L_apply_error_arg_count_2    ; if < 2 args, error
-    ; explicit argument count n = original count - 2
-    mov r8, rax
-    sub r8, 2                ; r8 = n
+    ; --- Check for at least two arguments ---
+    cmp   COUNT, 2
+    jb    L_error_arg_count_2         ; if COUNT < 2, error
 
-    ; --- Get closure and spliced list from caller's frame ---
-    ; Closure is argument 0: [rbp+24]
-    mov rbx, [rbp+24]
-    ; Spliced list is the last argument:
-    ; index = original count - 1; address = [rbp+24 + (original count-1)*8]
-    mov r10, rax             ; r10 = original count
-    dec r10                  ; r10 = original count - 1
-    mov r9, [rbp+24 + r10*8]  ; r9 := spliced list
+    ; --- Compute n = COUNT - 2 (number of explicit arguments) ---
+    mov   r8, COUNT
+    sub   r8, 2                       ; r8 := n
 
-    ; --- Compute length m of the spliced list ---
-    xor r11, r11             ; r11 = m = 0
-compute_length:
-    cmp r9, 0              ; assuming sob_nil is represented as 0
-    je length_done
-    cmp byte [r9], 1       ; assume T_pair is 1
-    jne L_apply_error_improper_list
-    inc r11              ; m++
-    ; Assume pair's cdr is at offset 16.
-    mov r9, [r9+16]
-    jmp compute_length
-length_done:
-    ; --- Compute total number of arguments T = n + m ---
-    mov r12, r8          ; r12 = n
-    add r12, r11         ; r12 = T
+    ; --- Get the closure from PARAM(0) ---
+    mov   rbx, PARAM(0)
 
-    ; --- Allocate new call frame ---
-    ; New frame size = header (16 bytes) + (T * 8)
-    mov rax, r12
-    imul rax, 8          ; T * 8
-    add rax, 16          ; total size in bytes
-    sub rsp, rax         ; allocate new frame
+    ; --- Get the spliced list from the last parameter ---
+    mov   r10, COUNT
+    dec   r10                        ; r10 := COUNT - 1 (index of spliced list)
+    mov   r9, PARAM(r10)             ; r9 := spliced list
 
-    ; New frame layout (relative to new rsp):
-    ;   [rsp + 0]  : (placeholder for saved rbp, not used)
-    ;   [rsp + 8]  : (will hold new argument count T)
-    ;   [rsp + 16] : argument 0, etc.
+    ; --- Compute m, the length of the spliced list ---
+    xor   r11, r11                   ; r11 := m = 0
+apply_length_loop:
+    cmp   r9, sob_nil                ; if spliced list is nil, we’re done
+    je    apply_length_done
+    cmp   byte [r9], T_pair          ; check that the current cell is a pair
+    jne   L_error_improper_list
+    inc   r11                       ; m++
+    ; Advance to next cell (assume SOB_PAIR_CDR is defined as [addr+16])
+    mov   r9, [r9 + 16]
+    jmp   apply_length_loop
+apply_length_done:
 
-    ; --- Copy explicit arguments from caller's frame ---
-    xor rsi, rsi         ; rsi = loop counter, 0 .. n-1
+    ; --- Compute total argument count: T = n + m ---
+    mov   r12, r8                   ; r12 := n
+    add   r12, r11                  ; r12 := T
+
+    ; --- Allocate a new argument frame on the stack for T arguments.
+    ;     (Each argument occupies 8 bytes.)
+    mov   rax, r12
+    imul  rax, 8                    ; rax = T * 8 bytes
+    sub   rsp, rax                  ; allocate space for T arguments
+
+    ; --- Copy the explicit arguments (PARAM(1) ... PARAM(n)) into new frame ---
+    xor   rsi, rsi                  ; rsi := 0 (loop counter)
 copy_explicit:
-    cmp rsi, r8
-    jge copy_explicit_done
-    mov rdi, [rbp+24 + rsi*8]      ; explicit arg i from caller
-    mov [rsp+16 + rsi*8], rdi      ; store into new frame slot i (arg0 at offset 16)
-    inc rsi
-    jmp copy_explicit
+    cmp   rsi, r8
+    jge   copy_explicit_done
+    ; Load the (i+1)ᵗʰ parameter from caller’s frame
+    mov   rdi, PARAM(rsi + 1)
+    ; Store it into the new frame at offset (rsi*8)
+    mov   [rsp + rsi*8], rdi
+    inc   rsi
+    jmp   copy_explicit
 copy_explicit_done:
 
     ; --- Flatten the spliced list into the new frame ---
-    ; Re-read spliced list from caller's frame:
-    mov r10, [rbp+24 + (rax/8 - 1)*8]  ; (not needed here; we already had it in r9)
-    ; Instead, use rdx for spliced list (which we can reload):
-    mov rdx, [rbp+24 + ( [rbp+16] - 1 )*8]  ; re-read last argument
-    ; However, if that is too complex for NASM, simply reload:
-    mov r10, [rbp+16]      ; original count
-    dec r10
-    mov rdx, [rbp+24 + r10*8]   ; rdx = spliced list
+    ; Re-read the spliced list from PARAM(COUNT-1)
+    mov   rdx, PARAM(COUNT - 1)
 flatten_loop:
-    cmp rdx, 0
-    je flatten_done
-    cmp byte [rdx], 1     ; T_pair
-    jne L_apply_error_improper_list
-    mov rdi, [rdx+8]      ; car (current element)
-    mov [rsp+16 + rsi*8], rdi  ; store into next free slot
-    inc rsi
-    mov rdx, [rdx+16]     ; next cell (cdr)
-    jmp flatten_loop
+    cmp   rdx, sob_nil
+    je    flatten_done
+    cmp   byte [rdx], T_pair
+    jne   L_error_improper_list
+    ; Retrieve the current element (the car); assume it is stored at offset 8
+    mov   rdi, SOB_PAIR_CAR(rdx)
+    ; Store it at the next free slot in the new frame
+    mov   [rsp + rsi*8], rdi
+    inc   rsi
+    ; Advance to the next pair (using SOB_PAIR_CDR)
+    mov   rdx, SOB_PAIR_CDR(rdx)
+    jmp   flatten_loop
 flatten_done:
 
-    ; --- Store the new argument count into the new frame header ---
-    mov [rsp+8], r12
-
-    ; --- Adopt the new frame: simply set rbp = rsp ---
-    mov rbp, rsp
-
-    ; --- Tail–jump to the closure ---
-    ; The closure's code pointer is assumed to be at offset 16.
-    mov rbx, [ [rbp+16 - 16] + 16 ]  ; Explanation: 
-    ;   The closure object was originally in [old rbp+24].  If that hasn't moved,
-    ;   you can simply use:
-    ;       mov rbx, [rbx+16]
-    ; So, if rbx still holds the closure pointer from earlier, do:
-    mov rbx, [rbx+16]
-    jmp rbx
-
-;------------------------------------------------------------
-; Error routines (adjust as needed)
-;------------------------------------------------------------
-L_apply_error_arg_count_2:
-    ; (Insert your error reporting here)
-    jmp L_apply_error_arg_count_2
-
-L_apply_error_improper_list:
-    ; (Insert your error reporting here)
-    jmp L_apply_error_improper_list
+    ; --- Tail–call the closure ---
+    ; Retrieve the closure’s code pointer from PARAM(0)
+    mov   rbx, SOB_CLOSURE_CODE(PARAM(0))
+    ; Before tail–jumping, recycle our frame by restoring the caller’s RBP.
+    mov   rax, [rbp]
+    mov   rbp, rax
+    ; (No further adjustment to RSP is needed if the closure’s code
+    ;  expects its argument frame to start at the current RSP.)
+    jmp   rbx
 
 L_code_ptr_is_null:
         enter 0, 0
