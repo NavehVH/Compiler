@@ -882,90 +882,73 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-    ; Save registers that we will use.
+    ; --- Save callee–saved registers
     push    rbx
     push    r12
-    push    r10
+    push    r13
 
-    ; --- Count the arguments ---
-    ; RSI points to an array of 8-byte arguments ending with a null pointer.
-    mov     rbx, rsi       ; rbx = pointer to the argument array
-    xor     rcx, rcx       ; rcx will count the arguments
+    ; --- Count arguments in the argument array.
+    ; Save original pointer in RBX (we will use RSI later for copying)
+    mov     rbx, rsi
+    xor     r10, r10       ; r10 will hold the count (n = 0)
 count_loop:
-    cmp     qword [rbx], 0
+    mov     rax, [rbx + r10*8]
+    cmp     rax, 0
     je      count_done
-    inc     rcx
-    add     rbx, 8
+    inc     r10
     jmp     count_loop
 count_done:
-    ; Save the count into r10 for later use.
-    mov     r10, rcx
-    cmp     r10, 6
-    ja      too_many_args
-
-    ; --- Save the target function pointer ---
-    ; Original function pointer is in RDI.
+    ; Now r10 = number of arguments.
+    ; Save target function pointer (originally in RDI) in R12.
     mov     r12, rdi
 
-    ; Reset rbx to the start of the argument array.
-    mov     rbx, rsi
+    ; --- Copy arguments into a contiguous block on the stack ---
+    ; Our goal: after copying, the first argument is at [RSP] and the i–th at [RSP + 8*i].
+    ; Compute block size = n × 8.
+    mov     rax, r10
+    imul    rax, 8        ; rax = r10 * 8
+    sub     rsp, rax      ; reserve space for argument block
+    ; Copy loop: for i = 0 to n–1, copy [RSI + i×8] into [RSP + i×8]
+    xor     r13, r13      ; r13 = loop index = 0
+copy_loop:
+    cmp     r13, r10
+    jge     copy_done
+    mov     rax, [rsi + r13*8]
+    mov     [rsp + r13*8], rax
+    inc     r13
+    jmp     copy_loop
+copy_done:
 
-    ; --- Load arguments into registers ---
-    ; We use r10 (which holds the count) for our comparisons.
-    cmp     r10, 0
-    je      call_no_args
+    ; --- Adjust stack alignment for Pascal convention ---
+    ; At entry to apply:
+    ;   - The caller pushed the return address so RSP mod 16 was likely 8.
+    ;   - We then pushed three registers (3×8 = 24 bytes); 8 - 24 ≡ 0 mod 16.
+    ; Now we subtracted the argument block of size (r10×8).
+    ;   If r10 is even, then (r10×8 mod 16) = 0 and RSP remains 0 mod 16.
+    ;   If r10 is odd, then (r10×8 mod 16) = 8 and RSP becomes 8 mod 16.
+    ; In the latter case we subtract an extra 8 bytes.
+    mov     rax, r10
+    and     rax, 1        ; rax = (r10 mod 2): 1 if odd, 0 if even.
+    cmp     rax, 0
+    je      aligned
+    sub     rsp, 8        ; subtract extra 8 bytes for alignment
+aligned:
 
-    ; If at least one argument, load first argument into RDI.
-    mov     rdi, [rbx]
-    cmp     r10, 1
-    je      call_function
-
-    ; If at least two, load second argument into RSI.
-    mov     rsi, [rbx+8]
-    cmp     r10, 2
-    je      call_function
-
-    ; If at least three, load third argument into RDX.
-    mov     rdx, [rbx+16]
-    cmp     r10, 3
-    je      call_function
-
-    ; If at least four, load fourth argument into RCX.
-    mov     rcx, [rbx+24]
-    cmp     r10, 4
-    je      call_function
-
-    ; If at least five, load fifth argument into R8.
-    mov     r8, [rbx+32]
-    cmp     r10, 5
-    je      call_function
-
-    ; If exactly six, load sixth argument into R9.
-    mov     r9, [rbx+40]
-call_function:
-    ; --- Align the stack ---
-    ; Upon entry, RSP mod 16 = 8 (because the call instruction pushed a return address).
-    ; We pushed three registers (3×8 = 24 bytes), so RSP mod 16 remains 8.
-    ; Before calling the target function, subtract 8 to get 0 mod 16.
-    sub     rsp, 8
+    ; --- Call the target function ---
+    ; In the Pascal convention the callee cleans up the argument block.
+    ; Note: if we subtracted an extra 8, then the callee must clean up (n+1)×8 bytes.
     call    r12
+
+    ; --- If we subtracted an extra 8, add it back now (the callee did not clean that one) ---
+    mov     rax, r10
+    and     rax, 1
+    cmp     rax, 0
+    je      restore_regs
     add     rsp, 8
-    jmp     end_apply
 
-call_no_args:
-    ; No arguments: still adjust stack alignment.
-    sub     rsp, 8
-    call    r12
-    add     rsp, 8
-    jmp     end_apply
-
-too_many_args:
-    ; If more than 6 arguments, return error (-1 in RAX).
-    mov     rax, -1
-
-end_apply:
-    ; Restore callee-saved registers.
-    pop     r10
+restore_regs:
+    ; --- Restore callee–saved registers and return ---
+    pop     r13
     pop     r12
     pop     rbx
     ret
