@@ -882,7 +882,69 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-;;; fill in for final project!
+    ; --- Prologue: Save callee-saved registers we use (each push is 8 bytes) ---
+    push rbx
+    push r12
+
+    ; --- Count the arguments in the array ---
+    ; RSI points to the argument array.
+    ; Each argument is 8 bytes and the array ends with a null.
+    mov    rbx, rsi      ; rbx = current pointer into argument array.
+    xor    r8, r8        ; r8 will hold the count.
+count_loop:
+    cmp    qword [rbx], 0
+    je     count_done
+    inc    r8
+    add    rbx, 8
+    jmp    count_loop
+count_done:
+    mov    r10, r8       ; r10 = count of arguments
+
+    ; --- Save the target function pointer ---
+    mov    r12, rdi
+
+    ; --- Adjust stack for 16-byte alignment ---
+    ; When this function was called, due to the call instruction,
+    ; RSP was (likely) 8-byte mis–aligned.
+    ; We pushed two registers (16 bytes) so our current alignment is still 8 mod 16.
+    ; Each argument is 8 bytes. To have the stack 16-byte aligned at the call,
+    ; we push a dummy value when the number of arguments is even.
+    test   r10, 1      ; check if count is odd (bit 0 == 1)
+    jnz    no_dummy    ; if odd, no dummy is needed (8 - odd*8 ≡ 0 mod16)
+    ; If even, push a dummy 8-byte value.
+    sub    rsp, 8
+    mov    qword [rsp], 0
+no_dummy:
+
+    ; --- Push the arguments in left-to-right order ---
+    ; (This is the Pascal style: the first argument is pushed first.)
+    mov    rbx, rsi    ; reset pointer to start of argument array.
+    mov    rcx, r10    ; use rcx as loop counter (number of arguments)
+push_loop:
+    cmp    rcx, 0
+    je     call_target
+    ; Push the current argument.
+    push   qword [rbx]
+    add    rbx, 8
+    dec    rcx
+    jmp    push_loop
+
+call_target:
+    ; --- Call the target function ---
+    ; The target function (in r12) is assumed to follow the Pascal calling
+    ; convention—that is, it cleans up (pops) the arguments off the stack before returning.
+    call   r12
+
+    ; --- After return, remove the dummy value if it was pushed ---
+    test   r10, 1
+    jnz    skip_dummy_pop
+    add    rsp, 8    ; remove the dummy value from the stack
+skip_dummy_pop:
+
+    ; --- Epilogue: Restore callee–saved registers and return ---
+    pop    r12
+    pop    rbx
+    ret
 
 L_code_ptr_is_null:
         enter 0, 0
