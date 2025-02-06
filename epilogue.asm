@@ -902,7 +902,7 @@ L_code_ptr_bin_apply:
         xor   r11, r11              ; r11 = m = 0
         mov   rcx, r9               ; rcx points to spliced list
 apply_length_loop:
-        cmp   rcx, SOB_nil          ; reached end?
+        cmp   rcx, sob_nil          ; reached end?
         je    apply_length_done
         cmp   byte [rcx], T_pair    ; verify that this is a pair
         jne   L_apply_error_improper_list
@@ -938,7 +938,7 @@ copy_explicit_done:
         ;     rsi now equals n, so the next free slot is at offset 8 + n*8.
         mov   rdx, r9             ; rdx will traverse the spliced list
 flatten_loop:
-        cmp   rdx, SOB_nil
+        cmp   rdx, sob_nil
         je    flatten_done
         cmp   byte [rdx], T_pair
         jne   L_apply_error_improper_list
