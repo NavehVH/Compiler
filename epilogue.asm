@@ -882,77 +882,109 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-    enter 0, 0
-    ; Check that we have at least 2 arguments
-    cmp COUNT, 2
-    jb L_error_arg_count_2
+        enter 0, 0               ; set up a new frame (push old rbp, set rbp=rsp)
+        cmp   COUNT, 2
+        jb    L_error_arg_count_2  ; require at least 2 parameters
 
-    ; Compute n = COUNT - 2 (number of explicit arguments)
-    mov r8, COUNT
-    sub r8, 2          ; r8 = n
+        ; Compute n = COUNT - 2 (number of explicit arguments)
+        mov   r8, COUNT
+        sub   r8, 2              ; r8 = n
 
-    ; Load the procedure and the spliced list
-    mov rbx, PARAM(0)         ; rbx := closure (procedure)
-    mov r10, COUNT
-    dec r10                   ; r10 = COUNT - 1 (index of the spliced list)
-    mov r9, PARAM(r10)        ; r9 := s (spliced argument list)
+        ; Load the closure (PARAM(0)) and spliced list s (PARAM(COUNT-1))
+        mov   rbx, PARAM(0)      ; rbx := closure
+        mov   r10, COUNT
+        dec   r10                ; r10 = COUNT - 1, index of s
+        mov   r9, PARAM(r10)     ; r9 := s (the spliced list)
 
-    ; --- Compute m, the length of the spliced list s ---
-    xor r11, r11              ; r11 = m = 0
-    mov rcx, r9               ; rcx = pointer to s
+        ; --- Compute m, the length of the spliced list s ---
+        xor   r11, r11           ; r11 = m = 0
+        mov   rcx, r9            ; rcx points to s
 length_loop:
-    cmp rcx, sob_nil
-    je length_done
-    cmp byte [rcx], T_pair    ; check that the cell is a proper pair
-    jne L_error_improper_list
-    inc r11                 ; m++
-    mov rcx, SOB_PAIR_CDR(rcx)
-    jmp length_loop
+        cmp   rcx, sob_nil
+        je    length_done
+        cmp   byte [rcx], T_pair   ; check that cell is a pair
+        jne   L_error_improper_list
+        inc   r11                ; m++
+        mov   rcx, SOB_PAIR_CDR(rcx)
+        jmp   length_loop
 length_done:
-    ; --- Compute T = n + m ---
-    mov r12, r8             ; r12 = n
-    add r12, r11            ; r12 = T, total argument count
+        ; --- Compute T = n + m ---
+        mov   r12, r8            ; r12 = n
+        add   r12, r11           ; r12 = T (total argument count)
 
-    ; --- Allocate new frame for tail call: T * 8 bytes ---
-    mov rax, r12
-    imul rax, 8
-    sub rsp, rax          ; allocate space for T arguments
+        ; --- Allocate new frame for tail call: T * 8 bytes ---
+        mov   rax, r12
+        imul  rax, 8
+        sub   rsp, rax           ; new argument frame occupies [rsp, rsp+T*8)
 
-    ; --- Copy explicit arguments from PARAM(1)...PARAM(n) into new frame ---
-    xor rsi, rsi          ; rsi = 0, loop counter
+        ; --- Copy explicit arguments into new frame ---
+        ; For i = 0 to n-1, copy PARAM(i+1) to [rsp + i*8]
+        xor   rsi, rsi           ; rsi = 0 (loop counter)
 copy_explicit:
-    cmp rsi, r8           ; if rsi >= n, done
-    jge copy_explicit_done
-    mov rdi, PARAM(rsi + 1)
-    mov rcx, rsp          ; new frame base
-    mov [rcx + rsi*8], rdi
-    inc rsi
-    jmp copy_explicit
+        cmp   rsi, r8
+        jge   copy_explicit_done
+        mov   rdi, PARAM(rsi + 1)
+        mov   rcx, rsp
+        mov   [rcx + rsi*8], rdi
+        inc   rsi
+        jmp   copy_explicit
 copy_explicit_done:
 
-    ; --- Flatten the spliced list s into new frame, starting at offset n*8 ---
-    ; rsi currently equals n.
-    mov rdx, r9         ; use rdx to traverse s
+        ; --- Flatten the spliced list s into new frame, starting at offset n*8 ---
+        ; rsi currently equals n.
+        mov   rdx, r9            ; use rdx to traverse the spliced list s
 flatten_loop:
-    cmp rdx, sob_nil
-    je flatten_done
-    cmp byte [rdx], T_pair
-    jne L_error_improper_list
-    mov rdi, SOB_PAIR_CAR(rdx)
-    mov rcx, rsp
-    mov [rcx + rsi*8], rdi   ; store spliced element
-    inc rsi                ; increment index
-    mov rdx, SOB_PAIR_CDR(rdx)
-    jmp flatten_loop
+        cmp   rdx, sob_nil
+        je    flatten_done
+        cmp   byte [rdx], T_pair
+        jne   L_error_improper_list
+        mov   rdi, SOB_PAIR_CAR(rdx)
+        mov   rcx, rsp
+        mov   [rcx + rsi*8], rdi   ; store this element at index rsi
+        inc   rsi                ; rsi++
+        mov   rdx, SOB_PAIR_CDR(rdx)
+        jmp   flatten_loop
 flatten_done:
-    ; Now the new frame at rsp contains T arguments.
-    ; (If your tail-call protocol expects the new count to be stored in a specific location,
-    ;  do so here. Adjust as needed.)
+        ; At this point the new argument frame (starting at rsp) holds T arguments.
 
-    ; --- Extract the closure’s code pointer and tail-jump ---
-    mov rbx, SOB_CLOSURE_CODE(rbx)  ; rbx := code pointer from the closure
-    leave
-    jmp rbx
+        ; --- (Optional) You might store the new argument count T in a known location
+        ; if your tail-call protocol requires it. For example:
+        ; mov qword [rsp + 8], r12
+
+        ; --- Extract the closure’s code pointer and perform tail call ---
+        mov   rbx, SOB_CLOSURE_CODE(rbx)  ; rbx := code pointer from the closure
+
+        ; Now we must recycle the current frame. Our apply routine began with "enter 0,0",
+        ; which saved the old rbp at [rbp]. In a proper tail call we want to discard our current frame.
+        ; Instead of using "leave" (which would restore rsp to the saved rbp, discarding our new frame),
+        ; we manually restore rbp and then jump.
+        mov   rax, [rbp]       ; retrieve saved old rbp from our frame header
+        mov   rbp, rax         ; restore old rbp (thus discarding our apply frame header)
+        ; Tail-jump to the closure’s code pointer (the new frame remains in place).
+        jmp   rbx
+
+; ---------------------------------------------------------------------
+; Error handlers (do not redefine if already defined elsewhere)
+L_error_improper_list:
+        mov   rdi, qword [stderr]
+        mov   rsi, fmt_error_improper_list
+        mov   rax, 0
+        ENTER
+        call  fprintf
+        LEAVE
+        mov   rax, -7
+        call  exit
+
+L_error_arg_count_2:
+        mov   rdi, qword [stderr]
+        mov   rsi, fmt_arg_count_2
+        mov   rdx, COUNT
+        mov   rax, 0
+        ENTER
+        call  fprintf
+        LEAVE
+        mov   rax, -3
+        call  exit
 
 L_code_ptr_is_null:
         enter 0, 0
