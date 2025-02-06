@@ -904,7 +904,7 @@ L_code_ptr_bin_apply:
     ; --- Compute length m of the spliced list ---
     xor r11, r11            ; r11 = m = 0
 compute_length:
-    cmp r9, SOB_nil
+    cmp r9, sob_nil
     je length_done
     cmp byte [r9], T_pair   ; check that the cell is a pair
     jne L_apply_error_improper_list
@@ -949,7 +949,7 @@ copy_explicit_done:
     dec r10
     mov rdx, [rbp+24 + r10*8]  ; rdx = spliced list (again)
 flatten_loop:
-    cmp rdx, SOB_nil
+    cmp rdx, sob_nil
     je flatten_done
     cmp byte [rdx], T_pair
     jne L_apply_error_improper_list
