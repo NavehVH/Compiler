@@ -719,10 +719,13 @@ module Tag_Parser : TAG_PARSER = struct
 
   let scheme_list_of_ocaml_list = List.fold_right (fun a b -> ScmPair (a, b));;
 
-  (* Finish task 2 HERE *)
+  let rec ocaml_list_to_scheme = function
+    | [] -> ScmNil
+    | head :: tail -> ScmPair (head, ocaml_list_to_scheme tail);;
+
   let rec tag_parse sexpr =
     match sexpr with
-    | ScmVoid | ScmBoolean _ | ScmChar _ | ScmString _ | ScmNumber _ ->
+    | ScmVoid | ScmBoolean _ | ScmChar _ | ScmString _ | ScmNumber _ | ScmSymbol "whatever" ->
       ScmConst sexpr
     | ScmPair (ScmSymbol "quote", ScmPair (sexpr, ScmNil)) ->
       ScmConst sexpr
@@ -732,25 +735,35 @@ module Tag_Parser : TAG_PARSER = struct
       if (is_reserved_word var)
       then raise (X_syntax "Variable cannot be a reserved word")
       else ScmVarGet(Var var)
-    (* add support for if (ADDED) *)
-    | ScmPair (ScmSymbol "if", ScmPair (test, ScmPair (dit, ScmNil))) ->
-      ScmIf(tag_parse test, tag_parse dit, ScmConst ScmVoid)
-    | ScmPair (ScmSymbol "if", ScmPair (test, ScmPair (dit, ScmPair (dif, ScmNil)))) ->
+    (* ---------> if <--------- *)
+    | ScmPair (ScmSymbol "if",ScmPair (test, ScmPair (dit, ScmPair (dif, ScmNil)))) -> 
       ScmIf(tag_parse test, tag_parse dit, tag_parse dif)
+    | ScmPair (ScmSymbol "if",ScmPair (test, ScmPair (dit, ScmNil))) -> 
+      ScmIf(tag_parse test, tag_parse dit, tag_parse ScmVoid)
+    | ScmPair(ScmSymbol "if",ScmPair (ScmPair (test, ScmPair (var, ScmNil)),
+                                      ScmPair (ScmPair (dit, ScmNil),  ScmPair (ScmPair (dif, ScmNil), ScmNil)))) ->
+      let test_ = tag_parse (ScmPair (ScmSymbol "let", ScmPair (var, test))) in
+      ScmIf(test_ , tag_parse dit , tag_parse dif)
+    | ScmPair (ScmSymbol "if",ScmPair (ScmPair (test, ScmPair (var, ScmNil)),
+                                       ScmPair (ScmPair (dit, ScmNil),  ScmNil))) ->
+      let void_ = tag_parse ScmVoid in
+      let test_ = tag_parse (ScmPair (ScmSymbol "let", ScmPair (var, test))) in
+      ScmIf(test_ , tag_parse dit , void_)
+    (* ---------> if <--------- *)
     | ScmPair (ScmSymbol "or", ScmNil) -> tag_parse (ScmBoolean false)
     | ScmPair (ScmSymbol "or", ScmPair (sexpr, ScmNil)) -> tag_parse sexpr
     | ScmPair (ScmSymbol "or", sexprs) ->
       (match (scheme_list_to_ocaml sexprs) with
        | (sexprs', ScmNil) -> ScmOr (List.map tag_parse sexprs')
        | _ -> raise (X_syntax "Malformed or-expression!"))
-    (* add support for begin (ADDED)*)
-    | ScmPair(ScmSymbol "begin", ScmNil) -> ScmConst(ScmVoid)
-    | ScmPair(ScmSymbol "begin", exprs) ->
-      let (expr_list, something_else) = scheme_list_to_ocaml exprs in
-      (match expr_list with
-       | [] -> ScmConst(ScmVoid) (* Empty begin *)
-       | [single_expr] -> tag_parse single_expr (* Single expression *)
-       | _ -> ScmSeq(List.map tag_parse expr_list)) (* Multiple expressions *)    
+    (* ---------> begin <--------- *)
+    | ScmPair (ScmSymbol "begin" , ScmNil) -> tag_parse (ScmVoid)
+    | ScmPair (ScmSymbol "begin" , ScmPair (sexpr, ScmNil)) -> tag_parse sexpr
+    | ScmPair (ScmSymbol "begin" , sexprs) ->
+      (match (scheme_list_to_ocaml sexprs) with
+       | (sexprs', ScmNil) -> ScmSeq (List.map tag_parse sexprs')
+       | _ -> raise (X_syntax "Malformed begin-expression!1"))
+    (* ---------> begin <--------- *)
     | ScmPair (ScmSymbol "set!",
                ScmPair (ScmSymbol var,
                         ScmPair (expr, ScmNil))) ->
@@ -759,22 +772,16 @@ module Tag_Parser : TAG_PARSER = struct
       else ScmVarSet(Var var, tag_parse expr)
     | ScmPair (ScmSymbol "set!", _) ->
       raise (X_syntax "Malformed set!-expression!")
-    (* add support for define (ADDED) *)
-    | ScmPair (ScmSymbol "define",
-               ScmPair (ScmPair (var, params),
-                        exprs)) ->
-      tag_parse
-        (ScmPair (ScmSymbol "define",
-                  ScmPair (var,
-                           ScmPair (ScmPair (ScmSymbol "lambda",
-                                             ScmPair (params, exprs)),
-                                    ScmNil))))
-    | ScmPair (ScmSymbol "define",
-               ScmPair (ScmSymbol var,
-                        ScmPair (expr, ScmNil))) ->
+    (* ---------> define <--------- *)
+    | ScmPair (ScmSymbol "define", ScmPair (ScmSymbol var, ScmPair (expr, ScmNil))) ->
       if (is_reserved_word var)
-      then raise (X_syntax "cannot define a reserved word")
+      then raise (X_syntax "cannot assign a reserved word")
       else ScmVarDef(Var var, tag_parse expr)
+    | ScmPair(ScmSymbol"define" , ScmPair(ScmPair(var , params) , expr )) -> (* (define (var params) expr )  -----> (define var (lambda(params) epxr)) *)
+      tag_parse(ScmPair (ScmSymbol "define", ScmPair (var,ScmPair (ScmPair (ScmSymbol "lambda",ScmPair (params, expr)), ScmNil))))   
+    | ScmPair (ScmSymbol "define", _) ->
+      raise (X_syntax "Malformed define-expression!")
+    (* ---------> define <--------- *)
     | ScmPair (ScmSymbol "lambda", rest)
       when scm_improper_list rest ->
       raise (X_syntax "Malformed lambda-expression!")
@@ -783,99 +790,91 @@ module Tag_Parser : TAG_PARSER = struct
       (match (scheme_list_to_ocaml params) with
        | params, ScmNil ->
          let params = unsymbolify_vars params in
+         let find_reserved_word = List.exists is_reserved_word params in 
+         if find_reserved_word then raise (X_syntax "cannot assign reserved word")
+         else
          if is_list_of_unique_names params
          then ScmLambda(params, Simple, expr)
          else raise (X_syntax "duplicate function parameters")
        | params, ScmSymbol opt ->
          let params = unsymbolify_vars params in
+         let find_reserved_word = List.exists is_reserved_word (params @ [opt]) in 
+         if find_reserved_word then raise (X_syntax "cannot assign reserved word")
+         else
          if is_list_of_unique_names (params @ [opt])
          then ScmLambda(params, Opt opt, expr)
          else raise (X_syntax "duplicate function parameters")
        | _ -> raise (X_syntax "invalid parameter list"))
-
-    (* add support for let (ADDED) #TODO CHANGE THIS *)
+    (* ---------> let <--------- *)
+    | ScmPair (ScmSymbol "let" , ScmNil) ->
+      raise (X_syntax "Malformed let-expression!")
+    | ScmPair (ScmSymbol "let", ScmPair (arg, ScmNil)) ->
+      raise (X_syntax "Malformed let-expression!")
+    |ScmPair (ScmSymbol  "let" , ScmPair(ScmNil , exprs)) ->
+      let exprs = tag_parse (ScmPair(ScmSymbol "begin", exprs)) in 
+      ScmApplic(ScmLambda([], Simple, exprs), [])
     | ScmPair (ScmSymbol "let", ScmPair (ribs, exprs)) ->
-      let (names, values) = names_values ribs in
-      let params = scheme_list_of_ocaml_list names ScmNil in
-      let args = scheme_list_of_ocaml_list values ScmNil in
-      let lambda_expr = ScmPair (ScmSymbol "lambda", ScmPair (params, exprs)) in
-      tag_parse (ScmPair (lambda_expr, args))
+      let ribs_list, _ = scheme_list_to_ocaml ribs in    
+      let vars_list = List.map (function
+          | ScmPair (ScmSymbol vars, ScmPair (vals, ScmNil)) -> if (is_reserved_word vars) then raise(X_syntax "cannot assign a reserved word") else (ScmSymbol vars) 
+          | _ -> raise (X_syntax "malformed let-expression")) ribs_list in
+      let vals_list = List.map (function
+          | ScmPair (ScmSymbol vars, ScmPair (vals, ScmNil)) -> vals
+          | _ -> raise (X_syntax "malformed let-expression")) ribs_list in
+      let exprs = tag_parse (ScmPair(ScmSymbol "begin", exprs)) in
+      let vars_list = unsymbolify_vars vars_list in
+      let vals_list = List.map tag_parse vals_list in
+      if is_list_of_unique_names vars_list
+      then ScmApplic(ScmLambda(vars_list, Simple, exprs), vals_list)
+      else raise (X_syntax "duplicate function parameters")
+    | ScmPair (ScmSymbol "let*" , ScmPair(ScmNil , exprs))->
+      let exprs = tag_parse (ScmPair(ScmSymbol "begin", exprs)) in
+      ScmApplic(ScmLambda([], Simple, exprs), [])
 
-    (* add support for let* (ADDED) *)
+    | ScmPair (ScmSymbol "let*", ScmPair (ScmNil, exprs)) ->
+      let exprs = tag_parse (ScmPair (ScmSymbol "begin", exprs)) in
+      ScmApplic (ScmLambda ([], Simple, exprs), [])
+
     | ScmPair (ScmSymbol "let*", ScmPair (ribs, exprs)) ->
-      let rec macro_expand_let_star ribs exprs =
-        match ribs with
-        | ScmNil -> ScmPair (ScmSymbol "let", ScmPair (ScmNil, exprs))
-        | ScmPair (ScmPair (name, ScmPair (value, ScmNil)), rest) ->
-          let inner_let = macro_expand_let_star rest exprs in
-          ScmPair (ScmSymbol "let",
-                   ScmPair (ScmPair (ScmPair (name, ScmPair (value, ScmNil)), ScmNil), 
-                            ScmPair (inner_let, ScmNil)))
-        | _ -> raise (X_syntax "Invalid let* syntax") in
-      tag_parse (macro_expand_let_star ribs exprs)
+      (match scheme_list_to_ocaml ribs with
+       | ribs_list, ScmNil -> 
+         let first = List.hd ribs_list in
+         let rest = List.tl ribs_list in
+         (match first with 
+          | ScmPair(ScmSymbol var , ScmPair(value , ScmNil)) ->
+            let first_var = if (is_reserved_word var) then raise(X_syntax "cannot assign a reserved word") else  unsymbolify_vars [ScmSymbol var] in
+            let first_val = [tag_parse value] in
+            if rest = [] then ScmApplic (ScmLambda (first_var, Simple, tag_parse (ScmPair (ScmSymbol "begin", exprs))), first_val) (* we have reached the last var , dont take the nill*)
+            else
+              let rest_ribs = ocaml_list_to_scheme rest in
+              let rest_body = ScmPair(ScmSymbol "let*" ,ScmPair (rest_ribs ,exprs)) in 
+              ScmApplic (ScmLambda (first_var, Simple, tag_parse rest_body), first_val)
+          | _ -> raise (X_syntax "Mlaformed let* expression")
+         )
+       | _ -> raise (X_syntax "Mlaformed let* expression")
+      )
+    (* ---------> let* <--------- *)
 
-    (* add support for letrec (ADDED) *)
+    (* ---------> letrec <--------- *)
+    | ScmPair (ScmSymbol "letrec", ScmPair (ribs , exprs)) ->
+      let ribs_list, _ = scheme_list_to_ocaml ribs in    
+      let n_ribs_list = List.map (function
+          | ScmPair (ScmSymbol vars, ScmPair (vals, ScmNil)) -> ScmPair (ScmSymbol vars, ScmPair ((ScmSymbol "whatever"), ScmNil))
+          | _ -> raise (X_syntax "malformed letrec-expression")) ribs_list in
+      let set_list = List.map (function
+          | ScmPair (ScmSymbol vars, ScmPair (vals, ScmNil)) -> ScmPair (ScmSymbol "set!", ScmPair (ScmSymbol vars ,ScmPair (vals, ScmNil)))
+          | _ -> raise (X_syntax "malformed letrec-expression")) ribs_list in
+      let exprs_list,exprs_tail = scheme_list_to_ocaml exprs in
+      let n_exprs_list = set_list @ exprs_list in
+      let n_exprs_list = ocaml_list_to_scheme n_exprs_list in
+      if is_list_of_unique_names (List.map (function
+          | ScmPair (ScmSymbol vars, _) -> vars
+          | _ -> raise (X_syntax "malformed letrec-expression")) ribs_list)
+      then tag_parse (ScmPair (ScmSymbol "let", ScmPair (ocaml_list_to_scheme n_ribs_list, n_exprs_list)))
+      else raise (X_syntax "duplicate function parameters")
 
-    | ScmPair (ScmSymbol "letrec", ScmPair (bindings, body)) ->
-      let rec expand_letrec bindings body =
-        match bindings with
-        | [ScmPair (ScmSymbol var, expr)] ->
-            ScmPair (
-              ScmSymbol "let",
-              ScmPair (
-                ScmPair (
-                  ScmPair (
-                    ScmSymbol var,
-                    ScmPair (
-                      ScmSymbol "quote",
-                      ScmPair (ScmSymbol "whatever", ScmNil)
-                    )
-                  ),
-                  ScmNil
-                ),
-                ScmPair (
-                  ScmPair (
-                    ScmSymbol "set!",
-                    ScmPair (ScmSymbol var, ScmPair (expr, ScmNil))
-                  ),
-                  body
-                )
-              )
-            )
-        | ScmPair (ScmSymbol var, expr) :: rest ->
-            let rest_expansion = expand_letrec rest body in
-            ScmPair (
-              ScmSymbol "let",
-              ScmPair (
-                ScmPair (
-                  ScmPair (
-                    ScmSymbol var,
-                    ScmPair (
-                      ScmSymbol "quote",
-                      ScmPair (ScmSymbol "whatever", ScmNil)
-                    )
-                  ),
-                  ScmNil
-                ),
-                ScmPair (
-                  ScmPair (
-                    ScmSymbol "set!",
-                    ScmPair (ScmSymbol var, ScmPair (expr, ScmNil))
-                  ),
-                  ScmPair (rest_expansion, ScmNil)
-                )
-              )
-            )
-        | _ -> raise (X_syntax "Malformed letrec bindings")
-      in
-      let bindings = scheme_list_to_ocaml bindings in
-      let bindings = match bindings with
-        | bindings, ScmNil -> bindings
-        | _ -> raise (X_syntax "Malformed letrec bindings")
-      in
-      let expanded_letrec = expand_letrec bindings body in
-      tag_parse expanded_letrec
-  
+
+    (* ---------> letrec <--------- *)
     | ScmPair (ScmSymbol "and", ScmNil) -> tag_parse (ScmBoolean true)
     | ScmPair (ScmSymbol "and", exprs) ->
       (match (scheme_list_to_ocaml exprs) with
@@ -1507,6 +1506,7 @@ sig
   val compile_scheme_file : string -> string -> unit
   val compile_and_run_scheme_string : string -> string -> unit
 end;;
+
 
 module Code_Generation (* : CODE_GENERATION *) = struct
   let word_size = 8;;
@@ -2220,9 +2220,9 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         (* end as mayer's *)
         ^ (Printf.sprintf "%s:\n" label_stack_ok)
         ^ "\tenter 0, 0\n"
-        ^ (run (List.length params') (env + 1) body)
+        ^ (run ((List.length params') + 1) (env + 1) body)
         ^ "\tleave\n"
-        ^ (Printf.sprintf "\tret AND_KILL_FRAME(%d)\n" (List.length params'))
+        ^ (Printf.sprintf "\tret AND_KILL_FRAME(%d)\n" ((List.length params') + 1))
         ^ (Printf.sprintf "%s:\t; new closure is in rax\n" label_end)
 
 
@@ -2284,9 +2284,6 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         ^ "\tlea rsp, [r11 + 8]\n"
         ^ "\tpop rbp\n"
         ^ "\tjmp SOB_CLOSURE_CODE(rax)\n"
-
-
-
 
     and runs params env exprs' =
       List.map (fun expr' -> run params env expr') exprs' in
