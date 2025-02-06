@@ -882,78 +882,32 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-    ; --- Save callee–saved registers ---
-    push    rbx
-    push    r12
-    push    r13
+        enter 0, 0                   ; set up a new frame
+        cmp     COUNT, 2             ; expect exactly 2 arguments
+        jne     L_error_arg_count_2  ; if not, jump to error handling
+        mov     rbx, PARAM(0)        ; rbx := procedure to apply
+        mov     rcx, PARAM(1)        ; rcx := argument list (a Scheme list)
+        xor     rdx, rdx             ; rdx will count the number of arguments
 
-    ; --- Count arguments ---
-    ; RSI points to an array of 8-byte arguments terminated by a 0.
-    mov     rbx, rsi      ; Save pointer to argument array
-    xor     r10, r10      ; r10 will hold the count (n = 0)
-count_loop:
-    mov     rax, [rbx + r10*8]
-    cmp     rax, 0
-    je      count_done
-    inc     r10
-    jmp     count_loop
-count_done:
-    ; Save the target function pointer from RDI into R12.
-    mov     r12, rdi
-
-    ; --- Reserve space for arguments ---
-    ; Compute block size = n×8
-    mov     rax, r10
-    imul    rax, 8
-    sub     rsp, rax      ; Reserve argument block on stack
-
-    ; --- Copy arguments into the reserved block ---
-    xor     r13, r13      ; loop index = 0
-copy_loop:
-    cmp     r13, r10
-    jge     copy_done
-    mov     rax, [rsi + r13*8]
-    mov     [rsp + r13*8], rax
-    inc     r13
-    jmp     copy_loop
-copy_done:
-
-    ; --- Adjust stack alignment for Pascal calling convention ---
-    ; After pushing 3 registers, RSP mod 16 = 0.
-    ; Then after subtracting n×8:
-    ;   - If n is even, n×8 mod 16 = 0 so RSP remains 0.
-    ;   - If n is odd, n×8 mod 16 = 8 so RSP becomes 8.
-    ; We require that before the CALL instruction RSP ≡ 8 (so that the call's push
-    ; makes the callee see a 16-byte–aligned stack).
-    mov     rax, r10
-    and     rax, 1       ; rax = n mod 2
-    cmp     rax, 0
-    je      even_args    ; if n is even, adjust further
-    ; if n is odd, RSP is already 8 mod 16; no adjustment needed.
-    jmp     alignment_done
-even_args:
-    sub     rsp, 8       ; subtract extra 8 bytes when n is even
-alignment_done:
-
-    ; --- Call the target function ---
-    call    r12
-
-    ; --- Restore stack (if extra was subtracted) ---
-    mov     rax, r10
-    and     rax, 1
-    cmp     rax, 0
-    je      restore_extra  ; if n is even, we subtracted extra 8 bytes
-    ; if n is odd, nothing extra was subtracted.
-    jmp     restore_regs
-restore_extra:
-    add     rsp, 8
-restore_regs:
-    ; --- Restore callee–saved registers and return ---
-    pop     r13
-    pop     r12
-    pop     rbx
-    ret
-
+; --- Flatten the argument list: for each element, push its value onto the stack.
+flatten_loop:
+        cmp     rcx, SOB_NIL         ; if rcx == nil, list is exhausted
+        je      flatten_done
+        ; Optionally: assert that rcx is a pair.
+        mov     rax, SOB_PAIR_CAR(rcx) ; get the car of the list cell
+        push    rax                  ; push this argument onto the stack
+        inc     rdx                  ; increment argument counter
+        mov     rcx, SOB_PAIR_CDR(rcx) ; move to the next cons cell
+        jmp     flatten_loop
+flatten_done:
+        ; At this point, rdx = number of arguments pushed.
+        ; Call the procedure in rbx with the new arguments on the stack.
+        call    rbx
+        ; (Since the called procedure is written in Pascal style,
+        ; it cleans up the argument block from the stack before returning.)
+        leave                      ; tear down the current frame
+        ret AND_KILL_FRAME(2)      ; clean up the 2 parameters of apply
+        
 L_code_ptr_is_null:
         enter 0, 0
         cmp COUNT, 1
