@@ -882,80 +882,85 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-    enter 0, 0               ; set up a new frame
-    cmp   COUNT, 2
-    jb    L_error_arg_count_2   ; require at least 2 parameters
+        enter 0, 0                   ; create a new stack frame
+        ; -- Check that we have at least two arguments --
+        cmp   COUNT, 2
+        jb    L_error_arg_count_2    ; (error routine)
 
-    ; Compute n = COUNT - 2 (explicit argument count)
-    mov   r8, COUNT
-    sub   r8, 2              ; r8 = n
+        ; -- Compute n = COUNT - 2 (the number of explicit arguments) --
+        mov   r8, COUNT
+        sub   r8, 2                  ; r8 = n
 
-    ; Load the closure (PARAM(0)) and the spliced list s (last parameter)
-    mov   rbx, PARAM(0)      ; rbx := closure
-    mov   r10, COUNT
-    dec   r10                ; r10 = COUNT - 1 (index of s)
-    mov   r9, PARAM(r10)     ; r9 := s
+        ; -- Get the closure and the spliced list --
+        mov   rbx, PARAM(0)          ; rbx := closure
+        mov   r10, COUNT
+        dec   r10                  ; r10 = COUNT - 1 (index of last parameter)
+        mov   r9, PARAM(r10)         ; r9 := spliced list (a proper list)
 
-    ; --- Compute m: the length of the spliced list s ---
-    xor   r11, r11           ; r11 = m = 0
-    mov   rcx, r9            ; rcx points to s
-length_loop:
-    cmp   rcx, sob_nil
-    je    length_done
-    cmp   byte [rcx], T_pair    ; verify that rcx is a pair
-    jne   L_error_improper_list
-    inc   r11                ; m++
-    mov   rcx, SOB_PAIR_CDR(rcx)
-    jmp   length_loop
-length_done:
-    ; --- Compute total argument count T = n + m ---
-    mov   r12, r8            ; r12 = n
-    add   r12, r11           ; r12 = T
+        ; -- Compute m: the length of the spliced list --
+        xor   r11, r11              ; r11 = m = 0
+        mov   rcx, r9               ; rcx points to spliced list
+apply_length_loop:
+        cmp   rcx, SOB_nil          ; reached end?
+        je    apply_length_done
+        cmp   byte [rcx], T_pair    ; verify that this is a pair
+        jne   L_error_improper_list
+        inc   r11                 ; m++
+        mov   rcx, SOB_PAIR_CDR(rcx) ; move to next cons cell
+        jmp   apply_length_loop
+apply_length_done:
+        ; -- Compute total argument count T = n + m --
+        mov   r12, r8              ; r12 = n
+        add   r12, r11             ; r12 = T
 
-    ; --- Allocate new argument frame: allocate T*8 bytes ---
-    mov   rax, r12
-    imul  rax, 8
-    sub   rsp, rax           ; new frame now spans [rsp, rsp + T*8)
+        ; -- Allocate new argument frame: reserve T*8 bytes on the stack --
+        mov   rax, r12
+        imul  rax, 8
+        sub   rsp, rax             ; new frame spans [rsp, rsp + (T*8)]
 
-    ; --- Copy explicit arguments (PARAM(1) ... PARAM(n)) into new frame ---
-    xor   rsi, rsi           ; rsi = 0 (loop counter for explicit args)
+        ; -- Copy explicit arguments into the new frame --
+        xor   rsi, rsi             ; rsi = loop counter = 0
 copy_explicit:
-    cmp   rsi, r8
-    jge   copy_explicit_done
-    mov   rdi, PARAM(rsi + 1)   ; load explicit argument i+1
-    mov   rcx, rsp
-    mov   [rcx + rsi*8], rdi    ; store it at new frame offset i*8
-    inc   rsi
-    jmp   copy_explicit
+        cmp   rsi, r8              ; while (rsi < n)
+        jge   copy_explicit_done
+        mov   rdi, PARAM(rsi + 1)   ; load explicit argument (PARAM(1) ... PARAM(n))
+        mov   rcx, rsp
+        mov   [rcx + rsi*8], rdi    ; store at new frame at offset (rsi*8)
+        inc   rsi
+        jmp   copy_explicit
 copy_explicit_done:
 
-    ; --- Flatten the spliced list s into new frame, starting at offset n*8 ---
-    ; rsi currently equals n.
-    mov   rdx, r9            ; use rdx as pointer to traverse s
+        ; -- Flatten the spliced list into the new frame --
+        ; rsi currently equals n; we copy the m arguments from the spliced list
+        mov   rdx, r9             ; use rdx to traverse the spliced list
 flatten_loop:
-    cmp   rdx, sob_nil
-    je    flatten_done
-    cmp   byte [rdx], T_pair
-    jne   L_error_improper_list
-    mov   rdi, SOB_PAIR_CAR(rdx)  ; get current element
-    mov   rcx, rsp
-    mov   [rcx + rsi*8], rdi      ; store element at offset rsi*8
-    inc   rsi                    ; increment our index
-    mov   rdx, SOB_PAIR_CDR(rdx) ; move to next cons cell
-    jmp   flatten_loop
+        cmp   rdx, SOB_nil
+        je    flatten_done
+        cmp   byte [rdx], T_pair
+        jne   L_error_improper_list
+        mov   rdi, SOB_PAIR_CAR(rdx)  ; get current list element
+        mov   rcx, rsp
+        mov   [rcx + rsi*8], rdi      ; store into new frame at offset rsi*8
+        inc   rsi                   ; next free slot
+        mov   rdx, SOB_PAIR_CDR(rdx) ; move to next cons cell
+        jmp   flatten_loop
 flatten_done:
-    ; Now the new frame (starting at rsp) holds T arguments.
 
-    ; --- Tail-Call Frame Recycling ---
-    ; Extract the closure’s code pointer from the closure in rbx.
-    mov   rbx, SOB_CLOSURE_CODE(rbx)
-    ; To recycle the current frame (created with enter 0,0), we restore the caller’s rbp.
-    mov   rax, [rbp]       ; load saved old rbp
-    mov   rbp, rax         ; restore it
-    ; Tail jump to the closure’s code pointer.
-    jmp   rbx
+        ; -- Tail–call the closure --
+        ; Get the closure’s code pointer from the closure object.
+        mov   rbx, SOB_CLOSURE_CODE(rbx)
+        ; (Optional: if you use frame–recycling, restore the caller’s frame pointer.)
+        mov   rax, [rbp]            ; load saved old rbp
+        mov   rbp, rax              ; restore caller’s rbp
 
+        ; Tail–jump to the closure’s code pointer.
+        jmp   rbx
+
+;------------------------------------------------------------
+; Error routines (you may substitute your own error handling)
+;------------------------------------------------------------
 L_error_arg_count_2:
+        ; Print an error message for too few arguments.
         mov   rdi, qword [stderr]
         mov   rsi, fmt_arg_count_2
         mov   rdx, COUNT
@@ -965,6 +970,37 @@ L_error_arg_count_2:
         LEAVE
         mov   rax, -3
         call  exit
+
+L_error_improper_list:
+        ; Print an error message for an improper list argument.
+        mov   rdi, qword [stderr]
+        mov   rsi, fmt_error_improper_list
+        mov   rax, 0
+        ENTER
+        call  fprintf
+        LEAVE
+        mov   rax, -7
+        call  exit
+
+;------------------------------------------------------------
+; Data definitions (adjust as needed)
+;------------------------------------------------------------
+section .data
+    ; Format strings for error messages:
+    fmt_arg_count_2:    db "!!! Expecting at least two arguments. Got %d", 10, 0
+    fmt_error_improper_list: db "!!! The argument is not a proper list!", 10, 0
+
+    ; (Other constants such as T_pair, SOB_nil, etc. should be defined in your runtime.)
+    
+; For example:
+    T_pair:             equ 1
+    SOB_nil:            dq 0    ; assume sob_nil is defined elsewhere
+    ; And helper macros or definitions for accessing fields:
+    ;   SOB_PAIR_CAR(ptr)   -> [ptr + 1]      (adjust offset as needed)
+    ;   SOB_PAIR_CDR(ptr)   -> [ptr + 1 + 8]
+    ;   SOB_CLOSURE_CODE(ptr) -> [ptr + 1 + 8]   (for instance)
+    
+; (Be sure to include the appropriate header or definitions for your system.)
 
 L_code_ptr_is_null:
         enter 0, 0
