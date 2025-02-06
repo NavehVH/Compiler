@@ -2325,14 +2325,16 @@ module Code_Generation (* : CODE_GENERATION *) = struct
     let exprs = List.map Tag_Parser.tag_parse sexprs in
     let exprs' = List.map Semantic_Analysis.semantics exprs in
     let asm_code = code_gen exprs' in
-    ( string_to_file (Printf.sprintf "%s.asm" file_out_base) asm_code;
-      match (Sys.command
-               (Printf.sprintf
-                  "make -f testing/makefile %s" file_out_base)) with
-      | 0 -> let _ = Sys.command (Printf.sprintf "./%s" file_out_base) in ()
-      | n -> (Printf.printf "!!! Failed with code %d\n" n; ()));;
-
-end;; (* end of Code_Generation struct *)
+    (* Read the epilogue (epilogue.asm) containing the apply implementation *)
+    let epilogue_code = file_to_string "epilogue.asm" in
+    (* Concatenate the epilogue to your generated code *)
+    let final_code = asm_code ^ "\n" ^ epilogue_code in
+    string_to_file (Printf.sprintf "%s.asm" file_out_base) final_code;
+    match (Sys.command
+            (Printf.sprintf "make -f testing/makefile %s" file_out_base)) with
+    | 0 -> let _ = Sys.command (Printf.sprintf "./%s" file_out_base) in ()
+    | n -> (Printf.printf "!!! Failed with code %d\n" n; ())
+  end;; (* end of Code_Generation struct *)
 
 (* end-of-input *)
 
