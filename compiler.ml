@@ -1530,6 +1530,7 @@ module Code_Generation (* : CODE_GENERATION *) = struct
       ("number?", "L_code_ptr_is_number");
       ("collection?", "L_code_ptr_is_collection");
       ("cons", "L_code_ptr_cons");
+      ("apply", "L_code_ptr_bin_apply");
       ("display-sexpr", "L_code_ptr_display_sexpr");
       ("write-char", "L_code_ptr_write_char");
       ("car", "L_code_ptr_car");
