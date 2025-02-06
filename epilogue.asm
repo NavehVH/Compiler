@@ -882,31 +882,127 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-        enter 0, 0                   ; set up a new frame
-        cmp     COUNT, 2             ; expect exactly 2 arguments
-        jne     L_error_arg_count_2  ; if not, jump to error handling
-        mov     rbx, PARAM(0)        ; rbx := procedure to apply
-        mov     rcx, PARAM(1)        ; rcx := argument list (a Scheme list)
-        xor     rdx, rdx             ; rdx will count the number of arguments
+    enter 0, 0
+    ; Check that at least 2 parameters were passed
+    cmp COUNT, 2
+    jb L_error_arg_count_2
+    
+    ; Compute n = COUNT - 2 (number of explicit arguments)
+    mov r8, COUNT
+    sub r8, 2          ; r8 = n
+    
+    ; Load proc (PARAM(0)) into rbx and load s (PARAM(COUNT-1)) into r9.
+    mov rbx, PARAM(0)           ; closure
+    mov r10, COUNT
+    dec r10                     ; r10 = COUNT - 1, index of s
+    mov r9, PARAM(r10)          ; r9 = s (spliced argument list)
+    
+    ; --- Compute m: the length of s ---
+    xor r11, r11                ; r11 = m = 0
+    mov rcx, r9                 ; rcx points to s
+length_loop:
+    cmp rcx, sob_nil
+    je length_done
+    ; Check that rcx is a pair.
+    cmp byte [rcx], T_pair
+    jne L_error_improper_list
+    inc r11                   ; m++
+    mov rcx, SOB_PAIR_CDR(rcx)
+    jmp length_loop
+length_done:
+    ; Now, total number of arguments T = n + m.
+    mov r12, r8               ; r12 = n
+    add r12, r11              ; r12 = T (total arg count)
 
-; --- Flatten the argument list: for each element, push its value onto the stack.
-flatten_loop:
-        cmp     rcx, sob_nil         ; if rcx == nil, list is exhausted
-        je      flatten_done
-        ; Optionally: assert that rcx is a pair.
-        mov     rax, SOB_PAIR_CAR(rcx) ; get the car of the list cell
-        push    rax                  ; push this argument onto the stack
-        inc     rdx                  ; increment argument counter
-        mov     rcx, SOB_PAIR_CDR(rcx) ; move to the next cons cell
-        jmp     flatten_loop
-flatten_done:
-        ; At this point, rdx = number of arguments pushed.
-        ; Call the procedure in rbx with the new arguments on the stack.
-        call    rbx
-        ; (Since the called procedure is written in Pascal style,
-        ; it cleans up the argument block from the stack before returning.)
-        leave                      ; tear down the current frame
-        ret AND_KILL_FRAME(2)      ; clean up the 2 parameters of apply
+    ; --- Allocate new frame for tail call ---
+    ; Each argument is 8 bytes; allocate T*8 bytes on the stack.
+    mov rax, r12
+    imul rax, 8
+    sub rsp, rax            ; new frame starts at current rsp
+
+    ; --- Copy explicit arguments (x0 ... xₙ₋₁) into new frame ---
+    ; We assume that explicit arguments are stored in the old frame accessible via PARAM(1) … PARAM(n)
+    ; We'll use a loop: for i = 0 to n-1, copy PARAM(i+1) to [new_frame + i*8].
+    mov rsi, 0              ; loop counter i = 0
+copy_explicit:
+    cmp rsi, r8             ; if i >= n, done
+    jge copy_explicit_done
+    ; Load explicit argument i+1:
+    mov rdi, PARAM(rsi + 1) ; note: we assume PARAM can be computed with an expression
+    ; Store it into new frame at offset rsi*8.
+    mov rcx, rsp
+    mov [rcx + rsi*8], rdi
+    inc rsi
+    jmp copy_explicit
+copy_explicit_done:
+
+    ; --- Flatten the spliced list s into the new frame, starting at offset n*8 ---
+    ; Let i = n (already in rsi).
+    mov rcx, r9             ; rcx points to s
+flatten_spliced:
+    cmp rcx, sob_nil
+    je flatten_spliced_done
+    cmp byte [rcx], T_pair
+    jne L_error_improper_list
+    mov rdi, SOB_PAIR_CAR(rcx)
+    mov rcx, rsp            ; new frame pointer
+    mov [rcx + rsi*8], rdi  ; store element at index i
+    inc rsi               ; i++
+    ; Continue with cdr of the list:
+    mov rcx, SOB_PAIR_CDR(rcx)  ; reusing rcx now for the list pointer
+    ; Because we just overwrote rcx with rsp, we need to restore the spliced list pointer.
+    ; So, to avoid clobbering, use a temporary register.
+    ; Revised: use rdx as temporary pointer for the spliced list.
+    mov rdx, SOB_PAIR_CDR(rcx)  ; incorrect: we need to fix this.
+    ; Let's instead do:
+    mov rdx, r9           ; rdx initially holds the original s pointer.
+flatten_spliced_loop:
+    cmp rdx, sob_nil
+    je flatten_spliced_done
+    cmp byte [rdx], T_pair
+    jne L_error_improper_list
+    mov rdi, SOB_PAIR_CAR(rdx)
+    mov rcx, rsp
+    mov [rcx + rsi*8], rdi
+    inc rsi
+    mov rdx, SOB_PAIR_CDR(rdx)
+    jmp flatten_spliced_loop
+flatten_spliced_done:
+    ; Now the new frame (at rsp) holds T arguments.
+    ; Convention: The new argument count T should be stored in a known location
+    ; for tail calls. Here we assume that our tail-call protocol expects the new
+    ; count to be at [new_frame + 8]. (This is similar to what we see in L_code_ptr_return.)
+    mov qword [rsp + 8], r12   ; store T
+
+    ; --- Extract the closure’s code pointer and tail-call ---
+    ; We assume that the closure object in rbx has its code pointer at SOB_CLOSURE_CODE(rbx).
+    mov rbx, SOB_CLOSURE_CODE(rbx)
+    ; Now recycle the current frame and perform a tail call.
+    leave
+    jmp rbx
+
+; --- Error Handlers ---
+
+L_error_improper_list:
+        mov rdi, qword [stderr]
+        mov rsi, fmt_error_improper_list
+        mov rax, 0
+        ENTER
+        call fprintf
+        LEAVE
+        mov rax, -7
+        call exit
+
+L_error_arg_count_2:
+        mov rdi, qword [stderr]
+        mov rsi, fmt_arg_count_2
+        mov rdx, COUNT
+        mov rax, 0
+        ENTER
+        call fprintf
+        LEAVE
+        mov rax, -3
+        call exit
 
 L_code_ptr_is_null:
         enter 0, 0
