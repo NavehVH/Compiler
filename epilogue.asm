@@ -884,55 +884,30 @@ L_code_ptr_lognot:
 L_code_ptr_bin_apply:
         enter 0, 0                   ; set up a new frame
         cmp     COUNT, 2             ; expect exactly 2 arguments
-        jne     L_error_arg_count_2  ; if not, jump to error handler
-        ; Load the procedure and argument list
+        jne     L_error_arg_count_2  ; if not, jump to error handling
         mov     rbx, PARAM(0)        ; rbx := procedure to apply
         mov     rcx, PARAM(1)        ; rcx := argument list (a Scheme list)
-        xor     rdx, rdx             ; rdx will count the number of arguments pushed
+        xor     rdx, rdx             ; rdx will count the number of arguments
 
-; --- Flatten the argument list: push each argument (the car field)
+; --- Flatten the argument list: for each element, push its value onto the stack.
 flatten_loop:
-        cmp     rcx, sob_nil         ; if rcx equals the empty list, we’re done
+        cmp     rcx, sob_nil         ; if rcx == nil, list is exhausted
         je      flatten_done
-        ; Verify that rcx is a proper pair
-        cmp     byte [rcx], T_pair
-        jne     L_error_improper_list
-        mov     rax, SOB_PAIR_CAR(rcx) ; get the car field (argument value)
-        push    rax                  ; push the argument onto the stack
-        inc     rdx                  ; increment our counter
+        ; Optionally: assert that rcx is a pair.
+        mov     rax, SOB_PAIR_CAR(rcx) ; get the car of the list cell
+        push    rax                  ; push this argument onto the stack
+        inc     rdx                  ; increment argument counter
         mov     rcx, SOB_PAIR_CDR(rcx) ; move to the next cons cell
         jmp     flatten_loop
 flatten_done:
-        ; At this point rdx holds the number of arguments pushed.
-        ; Now call the procedure in rbx.
-        call    rbx                ; call the procedure (it will clean up its argument block)
-        leave                      ; tear down our frame
-        ret AND_KILL_FRAME(2)      ; remove our two parameters from the caller’s stack
+        ; At this point, rdx = number of arguments pushed.
+        ; Call the procedure in rbx with the new arguments on the stack.
+        call    rbx
+        ; (Since the called procedure is written in Pascal style,
+        ; it cleans up the argument block from the stack before returning.)
+        leave                      ; tear down the current frame
+        ret AND_KILL_FRAME(2)      ; clean up the 2 parameters of apply
 
-; Error handler for an improper argument list:
-L_error_improper_list:
-        ; (For example, print an error message and exit.)
-        mov     rdi, qword [stderr]
-        mov     rsi, fmt_error_improper_list
-        mov     rax, 0
-        ENTER
-        call    fprintf
-        LEAVE
-        mov     rax, -7
-        call    exit
-
-; Error handler for wrong argument count (assumed already defined elsewhere)
-L_error_arg_count_2:
-        mov     rdi, qword [stderr]
-        mov     rsi, fmt_arg_count_2
-        mov     rdx, COUNT
-        mov     rax, 0
-        ENTER
-        call    fprintf
-        LEAVE
-        mov     rax, -3
-        call    exit
-        
 L_code_ptr_is_null:
         enter 0, 0
         cmp COUNT, 1
