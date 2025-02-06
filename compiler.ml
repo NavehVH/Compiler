@@ -2319,39 +2319,18 @@ module Code_Generation (* : CODE_GENERATION *) = struct
     compile_scheme_string file_out (file_to_string file_in);;
 
   let compile_and_run_scheme_string file_out_base user =
-  (* Read initialization code and source code from the user *)
-  let init = file_to_string "init.scm" in
-  let source_code = init ^ "\n" ^ user in
-
-  (* Parse the source code *)
-  let sexprs = (PC.star Reader.nt_sexpr source_code 0).found in
-  let exprs = List.map Tag_Parser.tag_parse sexprs in
-  let exprs' = List.map Semantic_Analysis.semantics exprs in
-
-  (* Generate assembly code from the parsed and analyzed expressions *)
-  let asm_code = code_gen exprs' in
-
-  (* Read the prologue and epilogue files *)
-  let prologue1 = file_to_string "prologue-1.asm" in
-  let prologue2 = file_to_string "prologue-2.asm" in
-  let epilogue   = file_to_string "epilogue.asm"   in
-
-  (* Concatenate all parts:
-     - prologue-1.asm and prologue-2.asm at the beginning,
-     - the generated code in the middle,
-     - and epilogue.asm at the end. *)
-  let final_code = prologue1 ^ "\n" ^
-                   prologue2 ^ "\n" ^
-                   asm_code    ^ "\n" ^
-                   epilogue in
-
-  (* Write the final assembly code to file *)
-  string_to_file (Printf.sprintf "%s.asm" file_out_base) final_code;
-
-  (* Call make and then run the produced executable *)
-  match Sys.command (Printf.sprintf "make -f testing/makefile %s" file_out_base) with
-  | 0 -> let _ = Sys.command (Printf.sprintf "./%s" file_out_base) in ()
-  | n -> Printf.printf "!!! Failed with code %d\n" n
+    let init = file_to_string "init.scm" in
+    let source_code = init ^ "\n" ^ user in
+    let sexprs = (PC.star Reader.nt_sexpr source_code 0).found in
+    let exprs = List.map Tag_Parser.tag_parse sexprs in
+    let exprs' = List.map Semantic_Analysis.semantics exprs in
+    let asm_code = code_gen exprs' in
+    ( string_to_file (Printf.sprintf "%s.asm" file_out_base) asm_code;
+      match (Sys.command
+               (Printf.sprintf
+                  "make -f testing/makefile %s" file_out_base)) with
+      | 0 -> let _ = Sys.command (Printf.sprintf "./%s" file_out_base) in ()
+      | n -> (Printf.printf "!!! Failed with code %d\n" n; ()));;
 
 end;; (* end of Code_Generation struct *)
 
