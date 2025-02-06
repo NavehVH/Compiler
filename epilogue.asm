@@ -882,68 +882,92 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-    ; --- Prologue: Save callee-saved registers we use (each push is 8 bytes) ---
-    push rbx
-    push r12
+    ; Save registers that we will use.
+    push    rbx
+    push    r12
+    push    r10
 
-    ; --- Count the arguments in the array ---
-    ; RSI points to the argument array.
-    ; Each argument is 8 bytes and the array ends with a null.
-    mov    rbx, rsi      ; rbx = current pointer into argument array.
-    xor    r8, r8        ; r8 will hold the count.
+    ; --- Count the arguments ---
+    ; RSI points to an array of 8-byte arguments ending with a null pointer.
+    mov     rbx, rsi       ; rbx = pointer to the argument array
+    xor     rcx, rcx       ; rcx will count the arguments
 count_loop:
-    cmp    qword [rbx], 0
-    je     count_done
-    inc    r8
-    add    rbx, 8
-    jmp    count_loop
+    cmp     qword [rbx], 0
+    je      count_done
+    inc     rcx
+    add     rbx, 8
+    jmp     count_loop
 count_done:
-    mov    r10, r8       ; r10 = count of arguments
+    ; Save the count into r10 for later use.
+    mov     r10, rcx
+    cmp     r10, 6
+    ja      too_many_args
 
     ; --- Save the target function pointer ---
-    mov    r12, rdi
+    ; Original function pointer is in RDI.
+    mov     r12, rdi
 
-    ; --- Adjust stack for 16-byte alignment ---
-    ; When this function was called, due to the call instruction,
-    ; RSP was (likely) 8-byte mis–aligned.
-    ; We pushed two registers (16 bytes) so our current alignment is still 8 mod 16.
-    ; Each argument is 8 bytes. To have the stack 16-byte aligned at the call,
-    ; we push a dummy value when the number of arguments is even.
-    test   r10, 1      ; check if count is odd (bit 0 == 1)
-    jnz    no_dummy    ; if odd, no dummy is needed (8 - odd*8 ≡ 0 mod16)
-    ; If even, push a dummy 8-byte value.
-    sub    rsp, 8
-    mov    qword [rsp], 0
-no_dummy:
+    ; Reset rbx to the start of the argument array.
+    mov     rbx, rsi
 
-    ; --- Push the arguments in left-to-right order ---
-    ; (This is the Pascal style: the first argument is pushed first.)
-    mov    rbx, rsi    ; reset pointer to start of argument array.
-    mov    rcx, r10    ; use rcx as loop counter (number of arguments)
-push_loop:
-    cmp    rcx, 0
-    je     call_target
-    ; Push the current argument.
-    push   qword [rbx]
-    add    rbx, 8
-    dec    rcx
-    jmp    push_loop
+    ; --- Load arguments into registers ---
+    ; We use r10 (which holds the count) for our comparisons.
+    cmp     r10, 0
+    je      call_no_args
 
-call_target:
-    ; --- Call the target function ---
-    ; The target function (in r12) is assumed to follow the Pascal calling
-    ; convention—that is, it cleans up (pops) the arguments off the stack before returning.
-    call   r12
+    ; If at least one argument, load first argument into RDI.
+    mov     rdi, [rbx]
+    cmp     r10, 1
+    je      call_function
 
-    ; --- After return, remove the dummy value if it was pushed ---
-    test   r10, 1
-    jnz    skip_dummy_pop
-    add    rsp, 8    ; remove the dummy value from the stack
-skip_dummy_pop:
+    ; If at least two, load second argument into RSI.
+    mov     rsi, [rbx+8]
+    cmp     r10, 2
+    je      call_function
 
-    ; --- Epilogue: Restore callee–saved registers and return ---
-    pop    r12
-    pop    rbx
+    ; If at least three, load third argument into RDX.
+    mov     rdx, [rbx+16]
+    cmp     r10, 3
+    je      call_function
+
+    ; If at least four, load fourth argument into RCX.
+    mov     rcx, [rbx+24]
+    cmp     r10, 4
+    je      call_function
+
+    ; If at least five, load fifth argument into R8.
+    mov     r8, [rbx+32]
+    cmp     r10, 5
+    je      call_function
+
+    ; If exactly six, load sixth argument into R9.
+    mov     r9, [rbx+40]
+call_function:
+    ; --- Align the stack ---
+    ; Upon entry, RSP mod 16 = 8 (because the call instruction pushed a return address).
+    ; We pushed three registers (3×8 = 24 bytes), so RSP mod 16 remains 8.
+    ; Before calling the target function, subtract 8 to get 0 mod 16.
+    sub     rsp, 8
+    call    r12
+    add     rsp, 8
+    jmp     end_apply
+
+call_no_args:
+    ; No arguments: still adjust stack alignment.
+    sub     rsp, 8
+    call    r12
+    add     rsp, 8
+    jmp     end_apply
+
+too_many_args:
+    ; If more than 6 arguments, return error (-1 in RAX).
+    mov     rax, -1
+
+end_apply:
+    ; Restore callee-saved registers.
+    pop     r10
+    pop     r12
+    pop     rbx
     ret
 
 L_code_ptr_is_null:
