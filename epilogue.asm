@@ -882,15 +882,15 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-    ; --- Save callee–saved registers
+    ; --- Save callee–saved registers ---
     push    rbx
     push    r12
     push    r13
 
-    ; --- Count arguments in the argument array.
-    ; Save original pointer in RBX (we will use RSI later for copying)
-    mov     rbx, rsi
-    xor     r10, r10       ; r10 will hold the count (n = 0)
+    ; --- Count arguments ---
+    ; RSI points to an array of 8-byte arguments terminated by a 0.
+    mov     rbx, rsi      ; Save pointer to argument array
+    xor     r10, r10      ; r10 will hold the count (n = 0)
 count_loop:
     mov     rax, [rbx + r10*8]
     cmp     rax, 0
@@ -898,18 +898,17 @@ count_loop:
     inc     r10
     jmp     count_loop
 count_done:
-    ; Now r10 = number of arguments.
-    ; Save target function pointer (originally in RDI) in R12.
+    ; Save the target function pointer from RDI into R12.
     mov     r12, rdi
 
-    ; --- Copy arguments into a contiguous block on the stack ---
-    ; Our goal: after copying, the first argument is at [RSP] and the i–th at [RSP + 8*i].
-    ; Compute block size = n × 8.
+    ; --- Reserve space for arguments ---
+    ; Compute block size = n×8
     mov     rax, r10
-    imul    rax, 8        ; rax = r10 * 8
-    sub     rsp, rax      ; reserve space for argument block
-    ; Copy loop: for i = 0 to n–1, copy [RSI + i×8] into [RSP + i×8]
-    xor     r13, r13      ; r13 = loop index = 0
+    imul    rax, 8
+    sub     rsp, rax      ; Reserve argument block on stack
+
+    ; --- Copy arguments into the reserved block ---
+    xor     r13, r13      ; loop index = 0
 copy_loop:
     cmp     r13, r10
     jge     copy_done
@@ -919,33 +918,35 @@ copy_loop:
     jmp     copy_loop
 copy_done:
 
-    ; --- Adjust stack alignment for Pascal convention ---
-    ; At entry to apply:
-    ;   - The caller pushed the return address so RSP mod 16 was likely 8.
-    ;   - We then pushed three registers (3×8 = 24 bytes); 8 - 24 ≡ 0 mod 16.
-    ; Now we subtracted the argument block of size (r10×8).
-    ;   If r10 is even, then (r10×8 mod 16) = 0 and RSP remains 0 mod 16.
-    ;   If r10 is odd, then (r10×8 mod 16) = 8 and RSP becomes 8 mod 16.
-    ; In the latter case we subtract an extra 8 bytes.
+    ; --- Adjust stack alignment for Pascal calling convention ---
+    ; After pushing 3 registers, RSP mod 16 = 0.
+    ; Then after subtracting n×8:
+    ;   - If n is even, n×8 mod 16 = 0 so RSP remains 0.
+    ;   - If n is odd, n×8 mod 16 = 8 so RSP becomes 8.
+    ; We require that before the CALL instruction RSP ≡ 8 (so that the call's push
+    ; makes the callee see a 16-byte–aligned stack).
     mov     rax, r10
-    and     rax, 1        ; rax = (r10 mod 2): 1 if odd, 0 if even.
+    and     rax, 1       ; rax = n mod 2
     cmp     rax, 0
-    je      aligned
-    sub     rsp, 8        ; subtract extra 8 bytes for alignment
-aligned:
+    je      even_args    ; if n is even, adjust further
+    ; if n is odd, RSP is already 8 mod 16; no adjustment needed.
+    jmp     alignment_done
+even_args:
+    sub     rsp, 8       ; subtract extra 8 bytes when n is even
+alignment_done:
 
     ; --- Call the target function ---
-    ; In the Pascal convention the callee cleans up the argument block.
-    ; Note: if we subtracted an extra 8, then the callee must clean up (n+1)×8 bytes.
     call    r12
 
-    ; --- If we subtracted an extra 8, add it back now (the callee did not clean that one) ---
+    ; --- Restore stack (if extra was subtracted) ---
     mov     rax, r10
     and     rax, 1
     cmp     rax, 0
-    je      restore_regs
+    je      restore_extra  ; if n is even, we subtracted extra 8 bytes
+    ; if n is odd, nothing extra was subtracted.
+    jmp     restore_regs
+restore_extra:
     add     rsp, 8
-
 restore_regs:
     ; --- Restore callee–saved registers and return ---
     pop     r13
