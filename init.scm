@@ -45,3 +45,26 @@
                        ,(run f unit (map cdr ss))))))))
     (lambda (f unit . ss)
       (run f unit ss))))
+
+
+(define ormap
+  (lambda (f . s)
+    (letrec ((loop
+               (lambda (s)
+                 (and (pair? (car s))
+                      (or (apply f (map car s))
+                          (loop (map cdr s)))))))
+      (and (pair? s)
+           (loop s)))))
+
+
+(define andmap
+  (lambda (f . s)
+    (letrec ((loop
+               (lambda (s)
+                 (or (null? (car s))
+                     (and (apply f (map car s))
+                          (loop (map cdr s)))))))
+      (or (null? s)
+          (and (pair? s)
+               (loop s))))))
