@@ -882,9 +882,9 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-    enter 0, 0                        ; set up a new frame
+    enter 0, 0                        ; set up our temporary frame
 
-    ; --- 1. Load COUNT from caller’s frame ---
+    ; --- 1. Load COUNT from the caller’s frame ---
     mov rax, qword [rbp+16]           ; rax := COUNT
     cmp rax, 2
     jb L_error_arg_count_2            ; if COUNT < 2, error
@@ -898,18 +898,18 @@ L_code_ptr_bin_apply:
 
     ; --- 4. Compute the spliced list’s address ---
     ;     The spliced list is the last parameter:
-    ;       index = COUNT - 1, so its address is [rbp+24 + 8*(COUNT-1)]
+    ;       its index = COUNT - 1, so its address is:
+    ;           [rbp+24 + 8*(COUNT-1)]
     mov r10, rax                    ; r10 := COUNT
     dec r10                         ; r10 := COUNT - 1
     mov r9, qword [rbp+24 + r10*8]    ; r9 := spliced list
 
     ; --- 5. Compute m, the length of the spliced list ---
-    ;     (For each cell, verify that its type-byte equals T_pair.)
     xor r11, r11                    ; r11 := m = 0
 apply_length_loop:
     cmp r9, sob_nil                 ; compare with canonical nil
     je  apply_length_done
-    cmp byte [r9], T_pair           ; check that cell is a pair
+    cmp byte [r9], T_pair           ; check that current cell is a pair
     jne L_error_improper_list
     inc r11                         ; m++
     mov r9, qword [r9+16]           ; r9 := SOB_PAIR_CDR(r9)
@@ -921,28 +921,28 @@ apply_length_done:
     add r12, r11                    ; r12 := T
 
     ; --- 7. Allocate a new call frame.
-    ;     Assume the header is 16 bytes.
-    ;     New frame size = 16 + (T * 8) bytes.
+    ;     New frame size = 16 (header) + (T * 8) bytes.
     mov rax, r12
     imul rax, 8                     ; rax = T * 8
     add rax, 16                     ; total size = header + T*8
     sub rsp, rax                    ; allocate new frame on stack
 
-    ; New frame layout (relative to new rsp):
-    ;   [rsp]       : (placeholder for saved RBP, unused)
-    ;   [rsp+8]     : new argument count T
-    ;   [rsp+16]    : argument 0 (first argument for the closure)
-    mov qword [rsp+8], r12          ; store new argument count
+    ; New frame layout (relative to new RSP):
+    ;   [rsp]       : (placeholder for saved RBP; not used)
+    ;   [rsp+8]     : (placeholder for return address; not used)
+    ;   [rsp+16]    : new argument count (T)
+    ;   [rsp+24]    : argument 0 (first argument for the closure)
+    mov qword [rsp+16], r12         ; store new argument count T
 
     ; --- 8. Copy explicit arguments into the new frame.
-    ;     Explicit arguments are PARAM(1) ... PARAM(n) from caller’s frame.
-    ;     In the caller, PARAM(1) is at [rbp+32].
-    xor rsi, rsi                    ; rsi = 0 (loop counter)
+    ;     In the caller, explicit arguments are PARAM(1) ... PARAM(n),
+    ;     stored starting at [rbp+32] (since PARAM(0) is at [rbp+24]).
+    xor rsi, rsi                    ; rsi := 0 (loop counter)
 copy_explicit:
     cmp rsi, r8
     jge copy_explicit_done
-    mov rdi, qword [rbp+32 + rsi*8]   ; load PARAM(rsi+1)
-    mov qword [rsp+16 + rsi*8], rdi   ; store into new frame slot i
+    mov rdi, qword [rbp+32 + rsi*8]   ; load caller’s PARAM(rsi+1)
+    mov qword [rsp+24 + rsi*8], rdi   ; store into new frame slot i
     inc rsi
     jmp copy_explicit
 copy_explicit_done:
@@ -957,20 +957,19 @@ flatten_loop:
     je flatten_done
     cmp byte [rdx], T_pair
     jne L_error_improper_list
-    mov rdi, qword [rdx+8]          ; get CAR (current element)
-    mov qword [rsp+16 + rsi*8], rdi ; store into next free slot
+    mov rdi, qword [rdx+8]          ; get CAR of current cell
+    mov qword [rsp+24 + rsi*8], rdi ; store it into next free slot
     inc rsi
-    mov rdx, qword [rdx+16]         ; advance to next pair (CDR)
+    mov rdx, qword [rdx+16]         ; advance to next cell (CDR)
     jmp flatten_loop
 flatten_done:
 
     ; --- 10. Tail–call the closure.
-    ;      Retrieve the closure’s code pointer (assumed at offset 16)
+    ;      Retrieve the closure’s code pointer from the closure object.
     mov rax, qword [rbx+16]         ; rax := closure’s code pointer
 
     ; IMPORTANT: Instead of restoring the old RBP, adopt the new frame.
-    ; Set RBP = current RSP so that the new frame (with header and arguments)
-    ; is active for the closure.
+    ; That is, set RBP = current RSP so that the new frame is active.
     mov rbp, rsp
 
     ; Tail–jump to the closure’s code pointer.
