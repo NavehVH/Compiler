@@ -23,3 +23,25 @@
                           (else (error))))
                    (else (error))))))
     (lambda s (fold-left bin+ 0 s))))
+
+(define fold-left
+  (letrec ((run
+             (lambda (f unit ss)
+               (if (ormap null? ss)
+                   unit
+                   (run f
+                     (apply f unit (map car ss))
+                     (map cdr ss))))))
+    (lambda (f unit . ss)
+      (run f unit ss))))
+
+(define fold-right
+  (letrec ((run
+             (lambda (f unit ss)
+               (if (ormap null? ss)
+                   unit
+                   (apply f
+                     `(,@(map car ss)
+                       ,(run f unit (map cdr ss))))))))
+    (lambda (f unit . ss)
+      (run f unit ss))))
