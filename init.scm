@@ -68,3 +68,22 @@
       (or (null? s)
           (and (pair? s)
                (loop s))))))
+
+(define map
+  (letrec ((map1
+             (lambda (f s)
+               (if (null? s)
+                   '()
+                   (cons (f (car s))
+                     (map1 f (cdr s))))))
+           (map-list
+             (lambda (f s)
+               (if (null? (car s))
+                   '()
+                   (cons (apply f (map1 car s))
+                     (map-list f
+                       (map1 cdr s)))))))
+    (lambda (f . s)
+      (if (null? s)
+          '()
+          (map-list f s)))))
