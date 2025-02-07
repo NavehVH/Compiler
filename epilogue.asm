@@ -889,7 +889,7 @@ L_code_ptr_bin_apply:
     ;cmp rax, 2
     ;jb L_error_arg_count_2            ; if COUNT < 2, error
     cmp COUNT, 2
-    jne L_error_arg_count_2
+    jb L_error_arg_count_2
     ; --- 2. Compute n = COUNT - 2 (number of explicit arguments) ---
     mov r8, rax                     ; r8 := COUNT
     sub r8, 2                       ; r8 := n
