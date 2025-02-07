@@ -899,17 +899,17 @@ L_code_ptr_bin_apply:
     ; --- 4. Compute the spliced list’s address ---
     ;     The spliced list is the last parameter:
     ;       index = COUNT - 1, so its address is [rbp+24 + 8*(COUNT-1)]
-    mov r10, rax                    ; r10 := COUNT (from rax)
+    mov r10, rax                    ; r10 := COUNT
     dec r10                         ; r10 := COUNT - 1
     mov r9, qword [rbp+24 + r10*8]    ; r9 := spliced list
 
     ; --- 5. Compute m, the length of the spliced list ---
-    ;     (For each cell, verify that its type-byte equals T_pair.)
+    ;     For each cell, verify that its type-byte equals T_pair.
     xor r11, r11                    ; r11 := m = 0
 apply_length_loop:
-    cmp r9, sob_nil                 ; if spliced list equals nil, done
+    cmp r9, SOB_nil                 ; compare with canonical nil
     je  apply_length_done
-    cmp byte [r9], T_pair           ; verify current cell is a pair
+    cmp byte [r9], T_pair           ; check that cell is a pair
     jne L_error_improper_list
     inc r11                         ; m++
     mov r9, qword [r9+16]           ; r9 := SOB_PAIR_CDR(r9)
@@ -920,51 +920,60 @@ apply_length_done:
     mov r12, r8                     ; r12 := n
     add r12, r11                    ; r12 := T
 
-    ; --- 7. Allocate a new argument frame ---
-    ;     New frame size = T * 8 bytes.
+    ; --- 7. Allocate a new call frame.
+    ;     Assume header size is 16 bytes.
+    ;     New frame size = 16 + (T * 8) bytes.
     mov rax, r12
     imul rax, 8                     ; rax = T * 8
+    add rax, 16                     ; total size = header + T*8
     sub rsp, rax                    ; allocate new frame on stack
 
-    ; --- 8. Copy explicit arguments into the new frame ---
-    ;     Explicit arguments are PARAM(1) ... PARAM(n),
-    ;     stored starting at [rbp+32] (since [rbp+24] is PARAM(0)).
-    ;     For i = 0 to n-1, copy from [rbp+32 + 8*i] into [rsp + 8*i].
-    xor rsi, rsi                    ; rsi := 0 (loop counter)
+    ; In the new frame:
+    ;   [rsp]       : (placeholder for saved RBP; not used)
+    ;   [rsp+8]     : new argument count T
+    ;   [rsp+16]    : first argument to be passed to the closure.
+    mov qword [rsp+8], r12          ; store new argument count
+
+    ; --- 8. Copy explicit arguments into the new frame.
+    ;     Explicit arguments are PARAM(1) ... PARAM(n) and are stored
+    ;     in the caller’s frame starting at [rbp+32] (since PARAM(0) is at [rbp+24]).
+    xor rsi, rsi                    ; rsi = 0 (loop counter)
 copy_explicit:
     cmp rsi, r8
     jge copy_explicit_done
     mov rdi, qword [rbp+32 + rsi*8]   ; load PARAM(rsi+1)
-    mov qword [rsp + rsi*8], rdi      ; store into new frame slot i
+    mov qword [rsp+16 + rsi*8], rdi   ; store into new frame slot i
     inc rsi
     jmp copy_explicit
 copy_explicit_done:
 
-    ; --- 9. Flatten the spliced list into the new frame ---
+    ; --- 9. Flatten the spliced list into the new frame.
     ;     Re-read the spliced list from PARAM(COUNT-1):
     mov r10, qword [rbp+16]         ; r10 := COUNT
     dec r10                         ; r10 := COUNT - 1
     mov rdx, qword [rbp+24 + r10*8]   ; rdx := spliced list
 flatten_loop:
-    cmp rdx, sob_nil
-    je  flatten_done
+    cmp rdx, SOB_nil
+    je flatten_done
     cmp byte [rdx], T_pair
     jne L_error_improper_list
-    ; Get the current element: SOB_PAIR_CAR(rdx) is at [rdx+8]
-    mov rdi, qword [rdx+8]
-    mov qword [rsp + rsi*8], rdi    ; store element at next free slot
+    mov rdi, qword [rdx+8]          ; get CAR of the current cell
+    mov qword [rsp+16 + rsi*8], rdi ; store into next free slot
     inc rsi
-    mov rdx, qword [rdx+16]         ; advance to next pair: SOB_PAIR_CDR(rdx)
+    mov rdx, qword [rdx+16]         ; advance to next cell (CDR)
     jmp flatten_loop
 flatten_done:
 
-    ; --- 10. Tail–call the closure ---
+    ; --- 10. Tail–call the closure.
     ;      Retrieve the closure’s code pointer from the closure object.
     mov rax, qword [rbx+16]         ; rax := closure’s code pointer
-    ; Restore the caller’s RBP (saved at [rbp])
+
+    ; Restore the caller’s RBP from our current frame.
+    ; (Assuming the saved RBP is stored at [rbp] in our current frame.)
     mov rcx, qword [rbp]
     mov rbp, rcx
-    ; Tail–jump to the code pointer.
+
+    ; Now tail–jump to the closure’s code.
     jmp rax
 
 L_code_ptr_is_null:
