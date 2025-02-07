@@ -884,52 +884,51 @@ L_code_ptr_lognot:
 L_code_ptr_bin_apply:
     enter 0, 0                        ; set up our temporary frame
 
-    ; --- 1. Load caller’s COUNT from [rbp+16] ---
+    ; --- (1) Load COUNT from caller’s frame ---
     mov rax, qword [rbp+16]           ; rax := COUNT
     cmp rax, 2
-    jb L_error_arg_count_2            ; if COUNT < 2, error
+    jb L_error_arg_count_2            ; error if COUNT < 2
 
-    ; --- 2. Compute n = COUNT - 2 (explicit arguments) ---
+    ; --- (2) Compute n = COUNT - 2 (explicit arguments) ---
     mov r8, rax                     ; r8 := COUNT
     sub r8, 2                       ; r8 := n
 
-    ; --- 3. Retrieve closure from PARAM(0) at [rbp+24] ---
+    ; --- (3) Retrieve closure from PARAM(0) at [rbp+24] ---
     mov rbx, qword [rbp+24]           ; rbx := closure object
 
-    ; --- 4. Get expected user-argument count k from closure.
-    ;     Assume the closure stores k at offset 8.
+    ; --- (4) Get expected user-argument count k from closure.
+    ;      (Assuming closure stores k at offset 8.)
     mov r13, qword [rbx+8]            ; r13 = k (expected user args)
-    ; Expected frame COUNT must be k + 1.
+    ; Expected frame COUNT is k+1.
     mov r14, r13
-    inc r14                         ; r14 = expected COUNT
+    inc r14                         ; r14 = k + 1
 
-    ; --- 5. Compute spliced list’s address.
-    ;     Spliced list is the last parameter, at index COUNT - 1.
-    mov r10, rax                    ; r10 := caller COUNT
+    ; --- (5) Compute the spliced list’s address.
+    ;      Spliced list is the last parameter at index COUNT - 1.
+    mov r10, rax                    ; r10 := COUNT
     dec r10                         ; r10 := COUNT - 1
     mov r9, qword [rbp+24 + r10*8]     ; r9 := spliced list
 
-    ; --- 6. Compute m = length of spliced list.
+    ; --- (6) Compute m = length of spliced list.
     xor r11, r11                    ; r11 := m = 0
 apply_length_loop:
-    cmp r9, sob_nil                 ; if spliced list equals nil, done
+    cmp r9, sob_nil                 ; compare with canonical nil
     je  apply_length_done
-    cmp byte [r9], T_pair           ; check that cell is a pair
+    cmp byte [r9], T_pair           ; check cell type
     jne L_error_improper_list
     inc r11                         ; m++
     mov r9, qword [r9+16]           ; r9 := SOB_PAIR_CDR(r9)
     jmp apply_length_loop
 apply_length_done:
 
-    ; --- 7. Verify that explicit arguments (n) plus spliced list length (m)
-    ;     equals k.
-    mov r12, r8                     ; r12 = n
+    ; --- (7) Verify that n + m equals k.
+    mov r12, r8                     ; r12 := n
     add r12, r11                    ; r12 = n + m
     cmp r12, r13
     jne L_error_incorrect_arity     ; if not equal, arity error
 
-    ; --- 8. Allocate a new call frame.
-    ;     New frame size = header (16 bytes) + (k * 8) bytes.
+    ; --- (8) Allocate new call frame.
+    ;      New frame size = header (16 bytes) + (k * 8) bytes.
     mov rax, r13                    ; rax = k
     imul rax, 8                     ; rax = k * 8
     add rax, 16                     ; total size = 16 + (k*8)
@@ -938,25 +937,25 @@ apply_length_done:
     ; New frame layout (relative to new RSP):
     ;   [rsp]       : placeholder for saved RBP (unused)
     ;   [rsp+8]     : placeholder for return address (unused)
-    ;   [rsp+16]    : new argument count (should be k + 1)
+    ;   [rsp+16]    : new COUNT (should be k+1)
     ;   [rsp+24]    : argument 0 (first user argument)
-    mov qword [rsp+16], r14         ; store new frame COUNT = k + 1
+    mov qword [rsp+16], r14         ; store new frame COUNT = k+1
 
-    ; --- 9. Copy explicit arguments into new frame.
-    ;     Caller’s explicit arguments (PARAM(1) ... PARAM(n)) are at [rbp+32].
+    ; --- (9) Copy explicit arguments from caller into new frame.
+    ;      Caller’s explicit arguments (PARAM(1)…PARAM(n)) are at [rbp+32].
     xor rsi, rsi                    ; rsi := 0 (loop counter)
 copy_explicit:
     cmp rsi, r8
     jge copy_explicit_done
-    mov rdi, qword [rbp+32 + rsi*8]   ; load caller’s PARAM(rsi+1)
-    mov qword [rsp+24 + rsi*8], rdi   ; store into new frame slot i
+    mov rdi, qword [rbp+32 + rsi*8]    ; load caller’s PARAM(rsi+1)
+    mov qword [rsp+24 + rsi*8], rdi    ; store into new frame slot i
     inc rsi
     jmp copy_explicit
 copy_explicit_done:
 
-    ; --- 10. Flatten the spliced list into the new frame.
-    ;      Re-read spliced list from PARAM(COUNT-1)
-    mov r10, qword [rbp+16]         ; r10 := caller COUNT
+    ; --- (10) Flatten the spliced list into the new frame.
+    ;       Re-read spliced list from PARAM(COUNT-1):
+    mov r10, qword [rbp+16]          ; r10 := COUNT
     dec r10                         ; r10 := COUNT - 1
     mov rdx, qword [rbp+24 + r10*8]    ; rdx := spliced list
 flatten_loop:
@@ -965,17 +964,37 @@ flatten_loop:
     cmp byte [rdx], T_pair
     jne L_error_improper_list
     mov rdi, qword [rdx+8]             ; get CAR of current cell
-    mov qword [rsp+24 + rsi*8], rdi    ; store into new frame slot
+    mov qword [rsp+24 + rsi*8], rdi    ; store it into new frame slot
     inc rsi
     mov rdx, qword [rdx+16]            ; advance to next cell (CDR)
     jmp flatten_loop
 flatten_done:
 
-    ; --- 11. Adopt the new frame and tail–call the closure.
-    ;     Instead of restoring the old frame pointer, we simply set RBP = RSP.
+    ; --- (11) Adopt the new frame and tail–call the closure.
+    ; Instead of restoring the old RBP, we set RBP = current RSP so that
+    ; the new frame (with header and arguments) is active.
     mov rbp, rsp
-    mov rax, qword [rbx+16]            ; rax = closure’s code pointer
+    mov rax, qword [rbx+16]            ; rax := closure’s code pointer
     jmp rax
+
+;----------------------------------------------------------------
+; Error routine for incorrect arity.
+;----------------------------------------------------------------
+L_error_incorrect_arity:
+    mov rdi, qword [stderr]
+    mov rsi, fmt_incorrect_arity_simple
+    mov rdx, r12        ; you can pass the computed (n+m) or expected value here
+    mov rax, 0
+    ENTER
+    call fprintf
+    LEAVE
+    mov rax, -6
+    call exit
+
+;----------------------------------------------------------------
+; (Other error routines such as L_error_arg_count_2 and
+;  L_error_improper_list must be defined elsewhere.)
+;----------------------------------------------------------------
 
 L_code_ptr_is_null:
         enter 0, 0
