@@ -926,7 +926,7 @@ apply_length_done:
     mov r12, r8                     ; r12 := n
     add r12, r11                    ; r12 = n + m
     cmp r12, r13
-    jne L_error_incorrect_arity     ; if not equal, signal arity error
+    jne L_error_incorrect_arity_simple     ; if not equal, signal arity error
 
     ; --- (8) Allocate a new call frame.
     ;     New frame size = 16 (header) + (k * 8) bytes.
@@ -980,19 +980,6 @@ flatten_done:
     mov rax, qword [rbx+16]           ; rax = closure’s code pointer
     jmp rax
 
-;----------------------------------------------------------------
-; Error routine for incorrect arity.
-;----------------------------------------------------------------
-L_error_incorrect_arity:
-    mov rdi, qword [stderr]
-    mov rsi, fmt_incorrect_arity_simple
-    mov rdx, r12    ; pass (n+m) as the found value (or adjust as desired)
-    mov rax, 0
-    ENTER
-    call fprintf
-    LEAVE
-    mov rax, -6
-    call exit
 
 L_code_ptr_is_null:
         enter 0, 0
