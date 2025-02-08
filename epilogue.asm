@@ -885,7 +885,7 @@ L_code_ptr_bin_apply:
     enter 0, 0                        ; set up our frame
 
     ; --- (1) Load caller’s COUNT from [rbp+16] ---
-    mov rax, qword [rbp + 3 * 8]           ; rax := arg count
+    mov rax, qword [rbp + 4 * 8]           ; rax := arg count
     cmp rax, 2
     jb L_error_arg_count_2            ; error if arg < 2
 
