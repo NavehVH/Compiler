@@ -926,7 +926,7 @@ L_code_ptr_lognot:
         jmp SOB_CLOSURE_CODE(r12)
 .L_error_apply_stack_corrupted:
         int3
-        
+
 L_code_ptr_is_null:
         enter 0, 0
         cmp COUNT, 1
