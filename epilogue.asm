@@ -901,7 +901,7 @@ L_code_ptr_bin_apply:
 
 count_arguments_loop:
         cmp rsi, sob_nil
-        je .L0_out
+        je count_arguments_loop
         assert_pair(rsi)
         inc rcx
         mov rsi, SOB_PAIR_CDR(rsi)
@@ -933,7 +933,7 @@ push_arguments_loop:
         stosq
         mov r11, SOB_PAIR_CDR(r11)
         dec rcx
-        jmp .L1
+        jmp push_arguments_loop
 
 finished_pushing_args:
         ; adjust the pointer for checking the stack 
