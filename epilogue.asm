@@ -947,9 +947,6 @@ finished_pushing_args:
 error_stack_corruption:
     int3
 
-error_invalid_argument_count:
-    int3
-
 L_code_ptr_is_null:
         enter 0, 0
         cmp COUNT, 1
