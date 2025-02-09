@@ -881,6 +881,7 @@ L_code_ptr_lognot:
         leave
         ret AND_KILL_FRAME(1)
 
+L_code_ptr_bin_apply:
         cmp qword [rsp + 8 * 2], 2
         jne L_error_arg_count_2
         mov r12, qword [rsp + 8 * 3]
