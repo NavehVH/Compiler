@@ -2175,14 +2175,12 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         ^ "\tcmp r14, 0\n"
         ^ (Printf.sprintf "\tjle %s\n" make_lambda_opt_stack_fixed) 
         ^ "\tmov r10, qword [rsp + 8 * (r9 + 2)] ; r10 = Load the last arg\n"
-        ^ "\tmov r8, rax                         ; r8= temp closure of rax \n"
         ^ "\tmov rdi, (1 + 8 + 8)                ; r10 = Allocate memory for the new pair (T_PAIR + CAR + CDR)\n"
         ^ "\tcall malloc                         ; Allocate memory, result in rax\n"
         ^ "\tmov byte [rax], T_pair              ; Mark as a pair\n"
         ^ "\tmov qword [rax + 1], r10         ; CAR: current argument\n"
         ^ "\tmov qword [rax + 1 + 8], rdx           ; CDR: current list\n"
-        ^ "\tmov rdx, rax                        ; rdx = Update rdx to point to the new pair\n"
-        ^ "\tmov rax, r8                         ; Restore closure to rax\n"        
+        ^ "\tmov rdx, rax                        ; rdx = Update rdx to point to the new pair\n"      
         ^ "\tdec r9                              ; args index minus 1\n"
         ^ "\tdec r14                             ; next iteration\n"
         ^ (Printf.sprintf "\tjmp %s\n" make_lambda_opt_arg_list) 
@@ -2245,48 +2243,51 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         ^ "\tjne L_error_non_closure\n"
         ^ "\tpush SOB_CLOSURE_ENV(rax)\n"
         ^ "\tcall SOB_CLOSURE_CODE(rax)\n"
-      | ScmApplic' (proc, args, Tail_Call) -> 
-        let args_code =
-          String.concat ""
-            (List.rev_map
-               (fun arg ->
-                  let compiled_arg = run params env arg in
-                  compiled_arg
-                  ^ "\tpush rax\n")
-               args)
-        and proc_code = run params env proc
-        and label_recycle_frame_loop =
-          make_tc_applic_recycle_frame_loop ()
-        and label_recycle_frame_done =
-          make_tc_applic_recycle_frame_done ()
-        in
-        "\t; Initiating tail-call optimization\n"
-        ^ args_code
-        ^ (Printf.sprintf "\tpush %d\t; Number of arguments\n" (List.length args))
-        ^ proc_code
-        ^ "\tcmp byte [rax], T_closure\n"
-        ^ "\tjne L_error_non_closure\n"
-        ^ "\tpush SOB_CLOSURE_ENV(rax)\n\n"
-        ^ "\t; Reclaiming the current stack frame\n"
-        ^ "\tpush qword [rbp + 8]\n"
-        ^ "\tpush qword [rbp]\n"
-        ^ (Printf.sprintf "\tmov r10, %d + 4\n" (List.length args))
-        ^ "\tmov r8, COUNT\n"
-        ^ "\tlea r8, [rbp + 8 * r8 + 8 * 3]\n"
-        ^ "\tlea r9, [rbp - 8]\n"
-        ^ (Printf.sprintf "%s:\n" label_recycle_frame_loop)
-        ^ "\tcmp r10, 0\n"
-        ^ (Printf.sprintf "\tje %s\n" label_recycle_frame_done)
-        ^ "\tmov r11, qword [r9]\n"
-        ^ "\tmov qword [r8], r11\n"
-        ^ "\tdec r10\n"
-        ^ "\tsub r8, 8\n"
-        ^ "\tsub r9, 8\n"
-        ^ (Printf.sprintf "\tjmp %s\n" label_recycle_frame_loop)
-        ^ (Printf.sprintf "%s:\n" label_recycle_frame_done)
-        ^ "\tlea rsp, [r8 + 8]\n"
-        ^ "\tpop rbp\n"
-        ^ "\tjmp SOB_CLOSURE_CODE(rax)\n"
+        | ScmApplic' (proc, args, Tail_Call) -> 
+          let args_code =
+            String.concat ""
+              (List.rev_map
+                 (fun arg ->
+                   let compiled_arg = run params env arg in
+                   compiled_arg
+                   ^ "\tpush rax\n")
+                 args)
+          and proc_code = run params env proc
+          and label_recycle_frame_loop =
+            make_tc_applic_recycle_frame_loop ()
+          and label_recycle_frame_done =
+            make_tc_applic_recycle_frame_done ()
+          in
+          "\t; Initiating tail-call optimization\n"
+          ^ args_code
+          ^ (Printf.sprintf "\tpush %d\t; Number of arguments\n" (List.length args))
+          ^ proc_code
+          ^ "\tcmp byte [rax], T_closure\n"
+          ^ "\tjne L_error_non_closure\n"
+          ^ "\tpush SOB_CLOSURE_ENV(rax)\n\n"
+
+          (* MODIFIED PART: *)
+          ^ "\t; Reclaiming the current stack frame\n"
+          ^ "\tpush qword [rbp + 8]\n"
+          ^ "\tpush qword [rbp]\n"
+          ^ (Printf.sprintf "\tmov r10, %d + 4\n" (List.length args))
+          ^ "\tmov r8, COUNT\n"
+          ^ "\tlea r8, [rbp + 8 * r8 + 24]\n"
+          ^ "\tlea r9, [rbp - 8]\n"
+          ^ (Printf.sprintf "%s:\n" label_recycle_frame_loop)
+          ^ "\tcmp r10, 0\n"
+          ^ (Printf.sprintf "\tje %s\n" label_recycle_frame_done)
+          ^ "\tmov r11, qword [r9]\n"
+          ^ "\tmov qword [r8], r11\n"
+          ^ "\tdec r10\n"
+          ^ "\tsub r8, 8\n"
+          ^ "\tsub r9, 8\n"
+          ^ (Printf.sprintf "\tjmp %s\n" label_recycle_frame_loop)
+          ^ (Printf.sprintf "%s:\n" label_recycle_frame_done)
+          ^ "\tlea rsp, [r8 + 8]\n"
+          ^ "\tpop rbp\n"
+          ^ "\tjmp SOB_CLOSURE_CODE(rax)\n"
+
 
     and runs params env exprs' =
       List.map (fun expr' -> run params env expr') exprs' in
