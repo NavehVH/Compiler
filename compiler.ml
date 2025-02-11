@@ -709,14 +709,6 @@ module Tag_Parser : TAG_PARSER = struct
       | _ -> false
     in run;;
 
-  (* added *)
-  let rec names_values ribs =
-    match ribs with
-    | ScmNil -> ([], [])
-    | ScmPair (ScmPair (name, ScmPair (value, ScmNil)), rest) ->
-      let (names, values) = names_values rest in
-      (name :: names, value :: values)
-
   let scheme_list_of_ocaml_list = List.fold_right (fun a b -> ScmPair (a, b));;
 
   let rec ocaml_list_to_scheme = function
@@ -735,7 +727,6 @@ module Tag_Parser : TAG_PARSER = struct
       if (is_reserved_word var)
       then raise (X_syntax "Variable cannot be a reserved word")
       else ScmVarGet(Var var)
-    (* ---------> if <--------- *)
     | ScmPair (ScmSymbol "if",ScmPair (test, ScmPair (dit, ScmPair (dif, ScmNil)))) -> 
       ScmIf(tag_parse test, tag_parse dit, tag_parse dif)
     | ScmPair (ScmSymbol "if",ScmPair (test, ScmPair (dit, ScmNil))) -> 
@@ -749,21 +740,18 @@ module Tag_Parser : TAG_PARSER = struct
       let void_ = tag_parse ScmVoid in
       let test_ = tag_parse (ScmPair (ScmSymbol "let", ScmPair (var, test))) in
       ScmIf(test_ , tag_parse dit , void_)
-    (* ---------> if <--------- *)
     | ScmPair (ScmSymbol "or", ScmNil) -> tag_parse (ScmBoolean false)
     | ScmPair (ScmSymbol "or", ScmPair (sexpr, ScmNil)) -> tag_parse sexpr
     | ScmPair (ScmSymbol "or", sexprs) ->
       (match (scheme_list_to_ocaml sexprs) with
        | (sexprs', ScmNil) -> ScmOr (List.map tag_parse sexprs')
        | _ -> raise (X_syntax "Malformed or-expression!"))
-    (* ---------> begin <--------- *)
     | ScmPair (ScmSymbol "begin" , ScmNil) -> tag_parse (ScmVoid)
     | ScmPair (ScmSymbol "begin" , ScmPair (sexpr, ScmNil)) -> tag_parse sexpr
     | ScmPair (ScmSymbol "begin" , sexprs) ->
       (match (scheme_list_to_ocaml sexprs) with
        | (sexprs', ScmNil) -> ScmSeq (List.map tag_parse sexprs')
        | _ -> raise (X_syntax "Malformed begin-expression!1"))
-    (* ---------> begin <--------- *)
     | ScmPair (ScmSymbol "set!",
                ScmPair (ScmSymbol var,
                         ScmPair (expr, ScmNil))) ->
@@ -772,7 +760,6 @@ module Tag_Parser : TAG_PARSER = struct
       else ScmVarSet(Var var, tag_parse expr)
     | ScmPair (ScmSymbol "set!", _) ->
       raise (X_syntax "Malformed set!-expression!")
-    (* ---------> define <--------- *)
     | ScmPair (ScmSymbol "define", ScmPair (ScmSymbol var, ScmPair (expr, ScmNil))) ->
       if (is_reserved_word var)
       then raise (X_syntax "cannot assign a reserved word")
@@ -781,7 +768,6 @@ module Tag_Parser : TAG_PARSER = struct
       tag_parse(ScmPair (ScmSymbol "define", ScmPair (var,ScmPair (ScmPair (ScmSymbol "lambda",ScmPair (params, expr)), ScmNil))))   
     | ScmPair (ScmSymbol "define", _) ->
       raise (X_syntax "Malformed define-expression!")
-    (* ---------> define <--------- *)
     | ScmPair (ScmSymbol "lambda", rest)
       when scm_improper_list rest ->
       raise (X_syntax "Malformed lambda-expression!")
@@ -805,7 +791,6 @@ module Tag_Parser : TAG_PARSER = struct
          then ScmLambda(params, Opt opt, expr)
          else raise (X_syntax "duplicate function parameters")
        | _ -> raise (X_syntax "invalid parameter list"))
-    (* ---------> let <--------- *)
     | ScmPair (ScmSymbol "let" , ScmNil) ->
       raise (X_syntax "Malformed let-expression!")
     | ScmPair (ScmSymbol "let", ScmPair (arg, ScmNil)) ->
@@ -853,9 +838,6 @@ module Tag_Parser : TAG_PARSER = struct
          )
        | _ -> raise (X_syntax "Mlaformed let* expression")
       )
-    (* ---------> let* <--------- *)
-
-    (* ---------> letrec <--------- *)
     | ScmPair (ScmSymbol "letrec", ScmPair (ribs , exprs)) ->
       let ribs_list, _ = scheme_list_to_ocaml ribs in    
       let n_ribs_list = List.map (function
@@ -874,7 +856,6 @@ module Tag_Parser : TAG_PARSER = struct
       else raise (X_syntax "duplicate function parameters")
 
 
-    (* ---------> letrec <--------- *)
     | ScmPair (ScmSymbol "and", ScmNil) -> tag_parse (ScmBoolean true)
     | ScmPair (ScmSymbol "and", exprs) ->
       (match (scheme_list_to_ocaml exprs) with
@@ -2190,30 +2171,35 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         ^ "\tmov r14, r15 ; r14 = num args\n"
         ^ "\tmov r8, r15 ; r14 = num args and num of iterations \n"
         ^ "\tadd r8, 3 ; add the first 3 things in the stuff to num of iterations\n"
+        ^ "\tmov r9, r8\n"
         ^ (Printf.sprintf "\tmov r10, %d; r10 = num of params\n" (List.length params')) 
         ^ "\tsub r14, r10 ; r14 = extra args\n" 
         ^ "\tsub r8, r14 ; r8 = number of iterations (check this)\n"
         ^ "\tdec r14 ; how much we need to change stack wise?\n"
-        ^ "\tmov qword [rsp + 8 * (r8 + 2)], rdx ; Add list to the right place\n"
+        ^ "\tmov qword [rsp + 8 * (r15 + 2)], rdx ; Add list to the right place\n"
+
+        ^ "\tmov r12, r9\n"
+        ^ "\tsub r12, r14\n"
+        ^ "\tdec r12\n"
+        ^ "\tdec r12\n"
         ^ (Printf.sprintf "\tjmp %s\n" label_loop_shrink_more)
 
         ^ (Printf.sprintf "%s:\n" label_loop_shrink_more)
         ^ "\tcmp r8, 0\n"
         ^ (Printf.sprintf "\tjle %s\n" make_lambda_opt_more_finish) 
-        ^ "\tlea r12, [r8 - 1]; r12 = position of the arg we need to move\n"
         ^ "\tmov r11, qword [rsp + 8 * r12] \n"
-        ^ "\tlea r12, [r14]\n"
-        ^ "\tmov qword [rsp + 8 * (r8 + 1)], r11 \n"
+        ^ "\tadd r12, r14\n"
+        ^ "\tmov qword [rsp + 8 * r12], r11 \n"
         ^ "\tdec r8 ; next iteration\n"
+        ^ "\tsub r12, r14 ; next iteration\n"
+        ^ "\tdec r12 ; next iteration\n"
         ^ (Printf.sprintf "\tjmp %s\n" label_loop_shrink_more) 
 
         ^ (Printf.sprintf "%s:\n" make_lambda_opt_more_finish)
-        ^ "\tmov r8, r15 ; num of args\n"
         ^ (Printf.sprintf "\tmov r10, %d\n" (List.length params'))
-        ^ "\tsub r8, r10 ; num of new args\n"
-        ^ "\tinc r8\n"
-        ^ "\tmov qword [rsp + 8 * 4], r8\n"
-        ^ "\tadd rsp, 8 * 2  ; \n"
+        ^ (Printf.sprintf "\tmov qword [rsp + 8 * (r14 + 2)], %d\n" ((List.length params') + 1))
+        ^ "\tshl r14, 3  ; Multiply r14 by 8\n"
+        ^ "\tadd rsp, r14  ; Add to rsp\n"
         ^ (Printf.sprintf "\tjmp %s\n" label_stack_ok)
 
         (* end as mayer's with change *)
@@ -2221,10 +2207,8 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         ^ "\tenter 0, 0\n"
         ^ (run ((List.length params') + 1) (env + 1) body)
         ^ "\tleave\n"
-        ^ (Printf.sprintf "\tret AND_KILL_FRAME(%d)\n" ((List.length params') + 1))
+        ^ (Printf.sprintf "\tret AND_KILL_FRAME(%d)\n" (List.length params' + 1))
         ^ (Printf.sprintf "%s:\t; new closure is in rax\n" label_end)
-
-
       | ScmApplic' (proc, args, Non_Tail_Call) -> 
         let args_code =
           String.concat ""
@@ -2243,52 +2227,47 @@ module Code_Generation (* : CODE_GENERATION *) = struct
         ^ "\tjne L_error_non_closure\n"
         ^ "\tpush SOB_CLOSURE_ENV(rax)\n"
         ^ "\tcall SOB_CLOSURE_CODE(rax)\n"
-        | ScmApplic' (proc, args, Tail_Call) -> 
-          let args_code =
-            String.concat ""
-              (List.rev_map
-                 (fun arg ->
-                   let compiled_arg = run params env arg in
-                   compiled_arg
-                   ^ "\tpush rax\n")
-                 args)
-          and proc_code = run params env proc
-          and label_recycle_frame_loop =
-            make_tc_applic_recycle_frame_loop ()
-          and label_recycle_frame_done =
-            make_tc_applic_recycle_frame_done ()
-          in
-          "\t; Initiating tail-call optimization\n"
-          ^ args_code
-          ^ (Printf.sprintf "\tpush %d\t; Number of arguments\n" (List.length args))
-          ^ proc_code
-          ^ "\tcmp byte [rax], T_closure\n"
-          ^ "\tjne L_error_non_closure\n"
-          ^ "\tpush SOB_CLOSURE_ENV(rax)\n\n"
-
-          (* MODIFIED PART: *)
-          ^ "\t; Reclaiming the current stack frame\n"
-          ^ "\tpush qword [rbp + 8]\n"
-          ^ "\tpush qword [rbp]\n"
-          ^ (Printf.sprintf "\tmov r10, %d + 4\n" (List.length args))
-          ^ "\tmov r8, COUNT\n"
-          ^ "\tlea r8, [rbp + 8 * r8 + 24]\n"
-          ^ "\tlea r9, [rbp - 8]\n"
-          ^ (Printf.sprintf "%s:\n" label_recycle_frame_loop)
-          ^ "\tcmp r10, 0\n"
-          ^ (Printf.sprintf "\tje %s\n" label_recycle_frame_done)
-          ^ "\tmov r11, qword [r9]\n"
-          ^ "\tmov qword [r8], r11\n"
-          ^ "\tdec r10\n"
-          ^ "\tsub r8, 8\n"
-          ^ "\tsub r9, 8\n"
-          ^ (Printf.sprintf "\tjmp %s\n" label_recycle_frame_loop)
-          ^ (Printf.sprintf "%s:\n" label_recycle_frame_done)
-          ^ "\tlea rsp, [r8 + 8]\n"
-          ^ "\tpop rbp\n"
-          ^ "\tjmp SOB_CLOSURE_CODE(rax)\n"
-
-
+      | ScmApplic' (proc, args, Tail_Call) -> 
+        let args_code =
+          String.concat ""
+            (List.rev_map
+               (fun arg ->
+                  let compiled_arg = run params env arg in
+                  compiled_arg
+                  ^ "\tpush rax\n")
+               args)
+        and proc_code = run params env proc
+        and label_recycle_frame_loop =
+          make_tc_applic_recycle_frame_loop ()
+        and label_recycle_frame_done =
+          make_tc_applic_recycle_frame_done ()
+        in
+        "\t; Initiating tail-call optimization\n"
+        ^ args_code
+        ^ (Printf.sprintf "\tpush %d\t; Number of arguments\n" (List.length args))
+        ^ proc_code
+        ^ "\tcmp byte [rax], T_closure\n"
+        ^ "\tjne L_error_non_closure\n"
+        ^ "\tpush SOB_CLOSURE_ENV(rax)\n"
+        ^ "\tpush qword [rbp + 8]\n"
+        ^ "\tpush qword [rbp]\n"
+        ^ (Printf.sprintf "\tmov r10, %d + 4\n" (List.length args))
+        ^ "\tmov r8, COUNT\n"
+        ^ "\tlea r8, [rbp + 8 * r8 + 24]\n"
+        ^ "\tlea r9, [rbp - 8]\n"
+        ^ (Printf.sprintf "%s:\n" label_recycle_frame_loop)
+        ^ "\tcmp r10, 0\n"
+        ^ (Printf.sprintf "\tje %s\n" label_recycle_frame_done)
+        ^ "\tmov r11, qword [r9]\n"
+        ^ "\tmov qword [r8], r11\n"
+        ^ "\tdec r10\n"
+        ^ "\tsub r8, 8\n"
+        ^ "\tsub r9, 8\n"
+        ^ (Printf.sprintf "\tjmp %s\n" label_recycle_frame_loop)
+        ^ (Printf.sprintf "%s:\n" label_recycle_frame_done)
+        ^ "\tlea rsp, [r8 + 8]\n"
+        ^ "\tpop rbp\n"
+        ^ "\tjmp SOB_CLOSURE_CODE(rax)\n"
     and runs params env exprs' =
       List.map (fun expr' -> run params env expr') exprs' in
     let codes = runs 0 0 exprs' in
