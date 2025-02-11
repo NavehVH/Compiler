@@ -882,69 +882,52 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-        ; making sure we got 2 args
         cmp qword [rsp + 8 * 2], 2
         jne L_error_arg_count_2
-
-        ; getting the closure from the stack
         mov r12, qword [rsp + 8 * 3]
         assert_closure(r12)
-
-        ; get the argument list pointer from the caller’s stack frame
         lea r10, [rsp + 8 * 4]
         mov r11, qword [r10]
-
-        ; save the return address
         mov r9, qword [rsp]
         mov rcx, 0
         mov rsi, r11
-
-count_arguments_loop:
+.L0:
         cmp rsi, sob_nil
-        je count_arguments_loop
+        je .L0_out
         assert_pair(rsi)
         inc rcx
         mov rsi, SOB_PAIR_CDR(rsi)
-        jmp count_arguments_loop
-
-finished_counting_args:
-        ; allocate space on the stack for the new frame
+        jmp .L0
+.L0_out:
         lea rbx, [8 * (rcx - 2)]
         sub rsp, rbx
         mov rdi, rsp
         cld
-
-        ; get the return address
+        ; place ret addr
         mov rax, r9
         stosq
-
-        ; get the closure environment
+        ; place env_f
         mov rax, SOB_CLOSURE_ENV(r12)
         stosq
-
-        ; setting the arg count
+        ; place COUNT = rcx
         mov rax, rcx
         stosq
-
-push_arguments_loop:
+.L1:
         cmp rcx, 0
-        je finished_pushing_args
+        je .L1_out
         mov rax, SOB_PAIR_CAR(r11)
         stosq
         mov r11, SOB_PAIR_CDR(r11)
         dec rcx
-        jmp push_arguments_loop
-
-finished_pushing_args:
-        ; adjust the pointer for checking the stack 
+        jmp .L1
+.L1_out:
         sub rdi, 8*1
         cmp r10, rdi
-        jne L_error_apply_stack_corrupted
-
+        jne .L_error_apply_stack_corrupted
         jmp SOB_CLOSURE_CODE(r12)
-
-L_error_apply_stack_corrupted:
+.L_error_apply_stack_corrupted:
         int3
+
 
 L_code_ptr_is_null:
         enter 0, 0
