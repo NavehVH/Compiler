@@ -882,51 +882,91 @@ L_code_ptr_lognot:
         ret AND_KILL_FRAME(1)
 
 L_code_ptr_bin_apply:
-        cmp qword [rsp + 8 * 2], 2
+        ; check if exactly 2 arguments are passed
+        cmp qword [rsp + 8 * 2], 2  
         jne L_error_arg_count_2
-        mov r12, qword [rsp + 8 * 3]
-        assert_closure(r12)
-        lea r10, [rsp + 8 * 4]
-        mov r11, qword [r10]
-        mov r9, qword [rsp]
-        mov rcx, 0
-        mov rsi, r11
-.L0:
-        cmp rsi, sob_nil
-        je .L0_out
-        assert_pair(rsi)
-        inc rcx
-        mov rsi, SOB_PAIR_CDR(rsi)
-        jmp .L0
-.L0_out:
-        lea rbx, [8 * (rcx - 2)]
-        sub rsp, rbx
-        mov rdi, rsp
-        cld
-        ; place ret addr
+
+        ; load function closure
+        mov r12, qword [rsp + 8 * 3]  
+        assert_closure(r12)  
+
+        ; point to first argument
+        lea r10, [rsp + 8 * 4]  
+
+        ; load the list 
+        mov r11, qword [r10] 
+
+        ; load ret
+        mov r9, qword [rsp]  
+
+        mov rcx, 0  
+
+        ; Copy argument list pointer
+        mov rsi, r11  
+
+.L_count_arguments:
+        ; check if end of list
+        cmp rsi, sob_nil  
+        je .L_argument_count_done
+
+        ; check if it's a pair
+        assert_pair(rsi)  
+
+        ; increase argument count
+        inc rcx  
+
+        mov rsi, SOB_PAIR_CDR(rsi)  
+        jmp .L_count_arguments
+
+.L_argument_count_done:
+        ; compute stack space needed (excluding closure and count)
+        lea rbx, [8 * (rcx - 2)]  
+
+        ; allocate space on the stack
+        sub rsp, rbx  
+
+        mov rdi, rsp  
+        cld  
+        
+        ; store ret address
         mov rax, r9
         stosq
-        ; place env_f
+        
+        ; store closure env
         mov rax, SOB_CLOSURE_ENV(r12)
         stosq
-        ; place COUNT = rcx
+        
+        ; store argument count
         mov rax, rcx
         stosq
-.L1:
-        cmp rcx, 0
-        je .L1_out
-        mov rax, SOB_PAIR_CAR(r11)
-        stosq
-        mov r11, SOB_PAIR_CDR(r11)
-        dec rcx
-        jmp .L1
-.L1_out:
-        sub rdi, 8*1
-        cmp r10, rdi
-        jne .L_error_apply_stack_corrupted
-        jmp SOB_CLOSURE_CODE(r12)
-.L_error_apply_stack_corrupted:
-        int3
+
+.L_push_arguments:
+        ; check if all arguments are pushed
+        cmp rcx, 0  
+        je .L_arguments_pushed
+
+        ; load current argument
+        mov rax, SOB_PAIR_CAR(r11)  
+        stosq 
+
+        ; move to next argument
+        mov r11, SOB_PAIR_CDR(r11)  
+
+        dec rcx 
+        jmp .L_push_arguments
+
+.L_arguments_pushed:
+        ; adjust stack pointer
+        sub rdi, 8*1  
+
+        ; verify stack integrity
+        cmp r10, rdi  
+        jne .L_error_stack_corrupted
+
+        jmp SOB_CLOSURE_CODE(r12)  
+
+.L_error_stack_corrupted:
+        int3  
 
 
 L_code_ptr_is_null:
