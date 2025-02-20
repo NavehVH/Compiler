@@ -5,6 +5,8 @@ This project is a **Scheme-to-x86 compiler**, built in **OCaml**, as part of a C
 
 The compiler follows a multi-stage pipeline, implementing **lexing, parsing, semantic analysis, optimization, and code generation**. It supports **tail-call optimization**, arithmetic operations, recursion, and function definitions.
 
+![Pipeline](images/pipeline.jpg)
+
 ## Features
 ✔ **Parsing of Scheme expressions** - Generates an Abstract Syntax Tree (AST).  
 ✔ **Static Type Checking** - Detects type mismatches at compile-time.  
